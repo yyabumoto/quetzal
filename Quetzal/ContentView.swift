@@ -1,20 +1,50 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var selection: URL?
+    @State private var session = ChatSession()
+    @State private var executableError: String?
 
     var body: some View {
         Group {
-            if let selection {
+            switch session.phase {
+            case .setup:
                 VStack {
-                    Text(selection.path)
-                    Button("Back") { self.selection = nil }
+                    StartView(start: start)
+                    if let executableError {
+                        Text(executableError).foregroundStyle(.red).padding(.horizontal)
+                    }
                 }
-            } else {
-                StartView { root, _ in selection = root }
+            case .connecting:
+                VStack(spacing: 12) {
+                    ProgressView("Starting Codex…")
+                    Button("Cancel") { Task { await session.close() } }
+                }
+            default:
+                ChatView(session: session)
             }
         }
         .frame(minWidth: 520, minHeight: 380)
+        .onDisappear { Task { await session.close() } }
+    }
+
+    private func start(_ worktree: URL, _ settings: ModelSettings) {
+        executableError = nil
+        var executable = CodexClient.findExecutable()
+        if executable == nil {
+            let panel = NSOpenPanel()
+            panel.message = "Choose the Codex CLI executable to start this session."
+            panel.prompt = "Use Codex"
+            panel.canChooseDirectories = false
+            guard panel.runModal() == .OK, let chosen = panel.url else { return }
+            guard CodexClient.isExecutable(chosen) else {
+                executableError = "Choose a file with execute permission."
+                return
+            }
+            executable = chosen
+        }
+        if let executable {
+            Task { await session.start(worktree: worktree, settings: settings, executable: executable) }
+        }
     }
 }
 

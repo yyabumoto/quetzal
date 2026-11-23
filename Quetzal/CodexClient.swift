@@ -84,13 +84,6 @@ actor CodexClient {
         child.standardError = FileHandle.nullDevice
         let handle = stdin.fileHandleForWriting
         guard fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else { throw CodexFailure("Cannot open Codex input.") }
-        child.terminationHandler = { [weak self] _ in
-            Task {
-                // 子が残した子孫プロセスが stdout を保持しても、接続は終了させる。
-                try? await Task.sleep(for: .seconds(1))
-                await self?.finish(CodexFailure.disconnected)
-            }
-        }
         try child.run()
         process = child
         input = handle
@@ -102,7 +95,12 @@ actor CodexClient {
             var descriptor = pollfd(fd: output.fileDescriptor, events: Int16(POLLIN), revents: 0)
             while !Task.isCancelled {
                 let ready = poll(&descriptor, 1, 200)
-                if ready == 0 || (ready < 0 && errno == EINTR) { continue }
+                if ready == 0 {
+                    // 子孫プロセスが stdout を継承した場合も、受信済みの行を読んでから終了する。
+                    if !child.isRunning { break }
+                    continue
+                }
+                if ready < 0 && errno == EINTR { continue }
                 guard ready > 0 else { break }
                 let count = Darwin.read(output.fileDescriptor, &bytes, bytes.count)
                 if count < 0 && errno == EINTR { continue }
@@ -138,7 +136,7 @@ actor CodexClient {
 
     func answer(_ request: ApprovalRequest, allow: Bool) async throws {
         guard let current = approvals[request.id], current.key == request.key else { throw CodexFailure("The request has ended.") }
-        guard !allow || current.changes == request.changes else { throw CodexFailure("File targets changed. Review the updated request.") }
+        guard !allow || current == request else { throw CodexFailure("Approval details changed. Review the updated request.") }
         let result = try current.result(allow: allow)
         approvals.removeValue(forKey: current.id)
         try await write(.object(["id": current.id.json, "result": result]))

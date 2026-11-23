@@ -91,7 +91,7 @@ nonisolated struct FileChange: Equatable, Sendable {
     }
 }
 
-nonisolated struct ApprovalRequest: Identifiable, Sendable {
+nonisolated struct ApprovalRequest: Identifiable, Equatable, Sendable {
     enum Kind: String, Sendable {
         case command = "item/commandExecution/requestApproval"
         case file = "item/fileChange/requestApproval"
