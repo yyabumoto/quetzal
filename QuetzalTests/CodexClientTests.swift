@@ -11,13 +11,14 @@ struct MockServer {
         executable = folder.appendingPathComponent("codex")
         let source = """
         #!/usr/bin/python3
-        import json, os, sys, time
+        import json, os, signal, sys, time
+        signal.alarm(15)
         def read(): return json.loads(sys.stdin.readline())
         def send(message):
             print(json.dumps(message, ensure_ascii=False), flush=True)
         def response(request, result): send({"id":request["id"], "result":result})
         def notify(method, params): send({"method":method, "params":params})
-        def start():
+        def start(expected=None):
             assert sys.argv[1:] == ["app-server", "--stdio"]
             req = read()
             assert req["method"] == "initialize" and req["params"]["clientInfo"]["name"]
@@ -26,6 +27,7 @@ struct MockServer {
             req = read()
             assert req["method"] == "thread/start" and os.path.samefile(req["params"]["cwd"], os.getcwd())
             assert set(req["params"]) <= {"cwd","model"}
+            if expected is not None: assert req["params"] == dict(expected, cwd=req["params"]["cwd"])
             response(req, {"thread":{"id":"t"},"cwd":os.getcwd()})
         def turn(number):
             req = read()
@@ -88,7 +90,7 @@ final class CodexClientTests: XCTestCase {
         try await client.interrupt(threadID: thread, turnID: second)
         guard case let .completed(_, _, status, _) = try await events.next() else { return XCTFail() }
         XCTAssertEqual(status, "interrupted")
-        await client.close()
+        await withinDeadline("Close session") { await client.close() }
     }
 
     func testFileUpdatesAndIndependentApprovals() async throws {
@@ -154,7 +156,7 @@ final class CodexClientTests: XCTestCase {
                 XCTAssertTrue(request.details.contains { $0.contains("network") })
                 try await client.answer(request, allow: true)
             case .completed:
-                await client.close()
+                await withinDeadline("Close session") { await client.close() }
                 return
             default: break
             }
@@ -170,10 +172,10 @@ final class CodexClientTests: XCTestCase {
             let starting = Task { try await client.start(worktree: server.folder, settings: settings) }
             if command.hasPrefix("time") {
                 try await Task.sleep(for: .milliseconds(100))
-                await client.close()
+                await withinDeadline("Close session") { await client.close() }
             }
             do { _ = try await starting.value; XCTFail("Unexpected success") } catch {}
-            await client.close()
+            await withinDeadline("Close session") { await client.close() }
         }
     }
 

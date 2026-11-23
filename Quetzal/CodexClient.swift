@@ -7,7 +7,7 @@ actor CodexClient {
     private let environment: [String: String]
     private let writer = DispatchQueue(label: "Quetzal.Codex.stdin")
     private var input: FileHandle?
-    private var process: Process?
+    private var process: (child: Process, exit: AsyncStream<Void>)?
     private var reader: Task<Void, Never>?
     private var shutdown: Task<Void, Never>?
     private var finished = false
@@ -84,28 +84,18 @@ actor CodexClient {
         child.standardError = FileHandle.nullDevice
         let handle = stdin.fileHandleForWriting
         guard fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else { throw CodexFailure("Cannot open Codex input.") }
+        let (exit, termination) = AsyncStream<Void>.makeStream()
+        child.terminationHandler = { _ in termination.finish() }
         try child.run()
-        process = child
+        process = (child, exit)
         input = handle
         let output = stdout.fileHandleForReading
+        let readQueue = DispatchQueue(label: "Quetzal.Codex.stdout", qos: .userInitiated)
         reader = Task.detached { [weak self] in
             defer { try? output.close() }
             var buffer = Data()
-            var bytes = [UInt8](repeating: 0, count: 16384)
-            var descriptor = pollfd(fd: output.fileDescriptor, events: Int16(POLLIN), revents: 0)
-            while !Task.isCancelled {
-                let ready = poll(&descriptor, 1, 200)
-                if ready == 0 {
-                    // 子孫プロセスが stdout を継承した場合も、受信済みの行を読んでから終了する。
-                    if !child.isRunning { break }
-                    continue
-                }
-                if ready < 0 && errno == EINTR { continue }
-                guard ready > 0 else { break }
-                let count = Darwin.read(output.fileDescriptor, &bytes, bytes.count)
-                if count < 0 && errno == EINTR { continue }
-                guard count > 0 else { break }
-                buffer.append(contentsOf: bytes.prefix(count))
+            while !Task.isCancelled, let chunk = await Self.readChunk(output, child: child, queue: readQueue) {
+                buffer.append(chunk)
                 while let newline = buffer.firstIndex(of: 10) {
                     let line = Data(buffer[..<newline])
                     buffer.removeSubrange(...newline)
@@ -113,6 +103,24 @@ actor CodexClient {
                 }
             }
             await self?.finish(buffer.isEmpty ? CodexFailure.disconnected : CodexFailure.malformed)
+        }
+    }
+
+    private nonisolated static func readChunk(_ output: FileHandle, child: Process, queue: DispatchQueue) async -> Data? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                var descriptor = pollfd(fd: output.fileDescriptor, events: Int16(POLLIN), revents: 0)
+                let ready = poll(&descriptor, 1, 200)
+                if ready == 0 {
+                    // 子孫が stdout を継承していても、直接の子が終了したら読み取りを終える。
+                    return continuation.resume(returning: child.isRunning ? Data() : nil)
+                }
+                if ready < 0 { return continuation.resume(returning: errno == EINTR ? Data() : nil) }
+                var bytes = [UInt8](repeating: 0, count: 16384)
+                let count = Darwin.read(output.fileDescriptor, &bytes, bytes.count)
+                if count < 0 && errno == EINTR { return continuation.resume(returning: Data()) }
+                continuation.resume(returning: count > 0 ? Data(bytes.prefix(count)) : nil)
+            }
         }
     }
 
@@ -268,13 +276,16 @@ actor CodexClient {
             writer.async { try? input.close() }
             self.input = nil
         }
-        guard let child = process else { return }
+        guard let (child, exit) = process else { return }
         process = nil
         shutdown = Task.detached {
             if child.isRunning { child.terminate() }
-            for _ in 0..<20 where child.isRunning { try? await Task.sleep(for: .milliseconds(25)) }
-            if child.isRunning { kill(child.processIdentifier, SIGKILL) }
-            child.waitUntilExit()
+            let escalation = Task {
+                try await Task.sleep(for: .milliseconds(500))
+                if child.isRunning { kill(child.processIdentifier, SIGKILL) }
+            }
+            for await _ in exit {}
+            escalation.cancel()
         }
     }
 

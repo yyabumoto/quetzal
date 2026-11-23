@@ -50,7 +50,7 @@ final class ChatSessionTests: XCTestCase {
         await session.send("2")
         try await waitFor { session.phase == .ready }
         XCTAssertEqual(session.messages.last?.text, "Sign in again")
-        await session.close()
+        await withinDeadline("Close session") { await session.close() }
     }
 
     func testInterruptBeforeStartReplyAndFailedInterruptAfterCompletion() async throws {
@@ -85,7 +85,7 @@ final class ChatSessionTests: XCTestCase {
         XCTAssertEqual(session.messages.map(\.text), ["1", "Turn interrupted."])
         await session.send("2")
         try await waitFor { session.phase == .ready }
-        await session.close()
+        await withinDeadline("Close session") { await session.close() }
     }
 
     func testDisconnectPreservesHistoryAndOtherWindow() async throws {
@@ -109,14 +109,21 @@ final class ChatSessionTests: XCTestCase {
         try await waitFor { first.phase == .disconnected }
         XCTAssertEqual(first.messages.map(\.text), ["1", "answer"])
         XCTAssertTrue(first.approvals.isEmpty)
-        await first.close()
+        await withinDeadline("Close session") { await first.close() }
         XCTAssertEqual(first.phase, .setup)
         XCTAssertEqual(second.phase, .ready)
-        await second.close()
+        await withinDeadline("Close session") { await second.close() }
     }
 
     func testClosingDuringStartupReapsChildAndAllowsFreshSession() async throws {
-        let server = try MockServer("open('pid','w').write(str(os.getpid()))\nread()\ntime.sleep(60)")
+        let server = try MockServer("""
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        with open("pid.tmp", "w") as marker:
+            marker.write(str(os.getpid()))
+        os.rename("pid.tmp", "pid")
+        read()
+        time.sleep(60)
+        """)
         let next = try MockServer("start()\ntime.sleep(60)")
         defer { try? server.remove(); try? next.remove() }
         let session = ChatSession()
@@ -124,13 +131,13 @@ final class ChatSessionTests: XCTestCase {
         let pidFile = server.folder.appendingPathComponent("pid")
         try await waitFor { FileManager.default.fileExists(atPath: pidFile.path) }
         let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
-        await session.close()
+        await withinDeadline("Close session") { await session.close() }
         await session.start(worktree: next.folder, settings: settings, executable: next.executable)
         await starting.value
         XCTAssertEqual(kill(pid, 0), -1)
         XCTAssertEqual(errno, ESRCH)
         XCTAssertEqual(session.phase, .ready)
         XCTAssertEqual(session.worktree, next.folder)
-        await session.close()
+        await withinDeadline("Close session") { await session.close() }
     }
 }

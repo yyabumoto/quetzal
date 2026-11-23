@@ -53,32 +53,21 @@ struct StartView: View {
     @State private var provider = Provider.codex
     @State private var root: URL?
     @State private var error: String?
-    @State private var model = ModelSettings.defaults(for: .codex).model ?? ""
-    @State private var effort = ModelSettings.defaults(for: .codex).effort ?? ""
+    @State private var codexDraft = SessionSettingsDraft()
+    @State private var claudeDraft = SessionSettingsDraft()
 
     var body: some View {
         Form {
             Picker("Provider", selection: $provider) {
                 ForEach(Provider.allCases) { Text($0.rawValue).tag($0) }
             }
-            .onChange(of: provider) {
-                let settings = ModelSettings.defaults(for: provider)
-                model = settings.model ?? ""
-                effort = settings.effort ?? ""
-            }
             LabeledContent("Worktree") {
                 if let root { Text(root.path).textSelection(.enabled) }
                 Button("Choose Folder…", action: chooseFolder)
             }
-            TextField("Model", text: $model, prompt: Text("CLI default"))
-            TextField("Effort", text: $effort, prompt: Text("CLI default"))
             if let error { Text(error).foregroundStyle(.red) }
-            if provider == .claudeCode { Text("Claude Code sessions are unavailable.") }
-            Button("Start Session") {
-                if let root { start(root, ModelSettings(model: model, effort: effort)) }
-            }
-            .disabled(root == nil || provider != .codex)
-            .keyboardShortcut(.defaultAction)
+            SessionOptions(provider: provider, root: root, draft: provider == .codex ? $codexDraft : $claudeDraft, start: start)
+                .id(provider)
         }
         .formStyle(.grouped)
     }
@@ -95,5 +84,36 @@ struct StartView: View {
             root = nil
             self.error = error.localizedDescription
         }
+    }
+}
+
+private struct SessionOptions: View {
+    let provider: Provider
+    let root: URL?
+    @Binding var draft: SessionSettingsDraft
+    let start: (URL, ModelSettings) -> Void
+    @AppStorage private var defaultModel: String
+    @AppStorage private var defaultEffort: String
+
+    init(provider: Provider, root: URL?, draft: Binding<SessionSettingsDraft>, start: @escaping (URL, ModelSettings) -> Void) {
+        self.provider = provider
+        self.root = root
+        _draft = draft
+        self.start = start
+        _defaultModel = AppStorage(wrappedValue: "", provider.key("model"))
+        _defaultEffort = AppStorage(wrappedValue: "", provider.key("effort"))
+    }
+
+    var body: some View {
+        let model = Binding(get: { draft.model ?? defaultModel }, set: { draft.model = $0 })
+        let effort = Binding(get: { draft.effort ?? defaultEffort }, set: { draft.effort = $0 })
+        TextField("Model", text: model, prompt: Text("CLI default"))
+        TextField("Effort", text: effort, prompt: Text("CLI default"))
+        if provider == .claudeCode { Text("Claude Code sessions are unavailable.") }
+        Button("Start Session") {
+            if let root { start(root, draft.settings(defaultModel: defaultModel, defaultEffort: defaultEffort)) }
+        }
+        .disabled(root == nil || provider != .codex)
+        .keyboardShortcut(.defaultAction)
     }
 }

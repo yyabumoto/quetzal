@@ -32,6 +32,15 @@ nonisolated struct ModelSettings: Equatable, Sendable {
     }
 }
 
+nonisolated struct SessionSettingsDraft {
+    var model: String?
+    var effort: String?
+
+    func settings(defaultModel: String, defaultEffort: String) -> ModelSettings {
+        ModelSettings(model: model ?? defaultModel, effort: effort ?? defaultEffort)
+    }
+}
+
 nonisolated enum Worktree {
     static func root(at folder: URL) throws -> URL {
         let git = Process()
