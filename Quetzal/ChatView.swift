@@ -2,6 +2,14 @@ import SwiftUI
 
 struct ChatView: View {
     @Bindable var session: ChatSession
+    @AppStorage private var savedModel: String
+    @AppStorage private var savedEffort: String
+
+    init(session: ChatSession) {
+        self.session = session
+        _savedModel = AppStorage(wrappedValue: "", session.provider.key("model"))
+        _savedEffort = AppStorage(wrappedValue: "", session.provider.key("effort"))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,12 +65,8 @@ struct ChatView: View {
                 }
                 SessionStatusLine(
                     provider: session.provider, providerSelection: nil,
-                    model: Binding(get: { session.settings.model ?? "" }, set: { model in
-                        session.updateSettings(ModelSettings(model: model, effort: session.settings.effort))
-                    }),
-                    effort: Binding(get: { session.settings.effort ?? "" }, set: { effort in
-                        session.updateSettings(ModelSettings(model: session.settings.model, effort: effort))
-                    })
+                    settings: Binding(get: { session.settings }, set: session.updateSettings),
+                    saved: ModelSettings(model: savedModel, effort: savedEffort)
                 )
                 .disabled(!session.canEditSettings)
             }
@@ -124,8 +128,10 @@ struct MessageInput: View {
 struct SessionStatusLine: View {
     let provider: Provider
     let providerSelection: Binding<Provider>?
-    @Binding var model: String
-    @Binding var effort: String
+    @Binding var settings: ModelSettings
+    let saved: ModelSettings
+
+    private var canUseDefault: Bool { providerSelection != nil }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -139,80 +145,36 @@ struct SessionStatusLine: View {
                 Text(provider.rawValue).foregroundStyle(.secondary)
             }
 
-            SessionStatusValue("Model", value: $model, allowsEmpty: providerSelection != nil)
-            if provider == .claudeCode && providerSelection == nil {
-                Menu {
-                    ForEach(ClaudeCodeEffort.levels, id: \.self) { level in
-                        Button(level) { effort = level }
-                    }
-                } label: {
-                    StatusValueLabel("Effort", value: effort)
-                }
-                .fixedSize()
-            } else {
-                SessionStatusValue("Effort", value: $effort, allowsEmpty: providerSelection != nil)
-            }
+            settingPicker("Model",
+                          options: provider.modelOptions(current: settings, saved: saved, canUseDefault: canUseDefault),
+                          selection: Binding(get: { settings.model ?? "" }, set: { model in
+                settings = provider.selectingModel(model, in: settings)
+            }))
+            settingPicker("Effort",
+                          options: provider.effortOptions(current: settings, saved: saved, canUseDefault: canUseDefault),
+                          selection: Binding(get: { settings.effort ?? "" }, set: { effort in
+                settings = ModelSettings(model: settings.model, effort: effort)
+            }))
             Spacer(minLength: 0)
         }
         .controlSize(.small)
     }
-}
 
-private struct SessionStatusValue: View {
-    let title: LocalizedStringKey
-    @Binding var value: String
-    let allowsEmpty: Bool
-    @State private var pendingValue = ""
-    @State private var isEditing = false
-
-    init(_ title: LocalizedStringKey, value: Binding<String>, allowsEmpty: Bool) {
-        self.title = title
-        _value = value
-        self.allowsEmpty = allowsEmpty
-    }
-
-    var body: some View {
-        Button {
-            pendingValue = value
-            isEditing = true
-        } label: {
-            StatusValueLabel(title, value: value)
-        }
-        .popover(isPresented: $isEditing) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title).font(.headline)
-                TextField(title, text: $pendingValue, prompt: Text("CLI default"))
-                Button("Apply") {
-                    value = pendingValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                    isEditing = false
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!allowsEmpty && pendingValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding()
-            .frame(width: 244)
-        }
-    }
-}
-
-private struct StatusValueLabel: View {
-    let title: LocalizedStringKey
-    let value: String
-
-    init(_ title: LocalizedStringKey, value: String) {
-        self.title = title
-        self.value = value
-    }
-
-    var body: some View {
+    private func settingPicker(_ title: LocalizedStringKey, options: [String], selection: Binding<String>) -> some View {
         HStack(spacing: 4) {
             Text(title).foregroundStyle(.secondary)
-            if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("CLI default")
-            } else {
-                Text(verbatim: value)
+                .accessibilityHidden(true)
+            Picker(title, selection: selection) {
+                ForEach(options, id: \.self) { option in
+                    if option.isEmpty {
+                        Text("CLI default").tag(option)
+                    } else {
+                        Text(verbatim: option).tag(option)
+                    }
+                }
             }
+            .pickerStyle(.menu)
+            .labelsHidden()
         }
-        .lineLimit(1)
     }
 }

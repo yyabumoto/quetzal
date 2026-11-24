@@ -46,6 +46,60 @@ final class SessionLifecycleTests: XCTestCase {
         }
     }
 
+    func testMenusKeepNormalizedSavedAndCurrentModelsAndShowWhenDefaultCanBeChosen() {
+        let current = ModelSettings(model: " current-model ", effort: nil)
+        let saved = ModelSettings(model: " saved-model ", effort: nil)
+        XCTAssertEqual(Provider.claudeCode.modelOptions(current: current, saved: saved, canUseDefault: true),
+                       ["", "opus", "sonnet", "haiku", "saved-model", "current-model"])
+        XCTAssertEqual(Provider.claudeCode.modelOptions(current: current, saved: saved, canUseDefault: false),
+                       ["opus", "sonnet", "haiku", "saved-model", "current-model"])
+        XCTAssertEqual(Provider.claudeCode.modelOptions(current: ModelSettings(model: "", effort: nil),
+                                                        saved: ModelSettings(model: " sonnet ", effort: nil),
+                                                        canUseDefault: false),
+                       ["", "opus", "sonnet", "haiku"])
+    }
+
+    func testEffortMenusUseSelectedModelAndKeepExistingValues() {
+        let savedMax = ModelSettings(model: nil, effort: " max ")
+        let savedCustom = ModelSettings(model: nil, effort: "custom")
+        let legacy = ModelSettings(model: "gpt-5.5", effort: "ultra")
+        XCTAssertEqual(Provider.codex.effortOptions(current: legacy, saved: savedMax, canUseDefault: false),
+                       ["low", "medium", "high", "xhigh", "ultra"])
+        XCTAssertEqual(Provider.codex.effortOptions(current: ModelSettings(model: "gpt-6-luna", effort: nil),
+                                                    saved: savedMax, canUseDefault: true),
+                       ["", "low", "medium", "high", "xhigh", "max"])
+        XCTAssertEqual(Provider.codex.effortOptions(current: ModelSettings(model: "custom-model", effort: nil),
+                                                    saved: savedCustom, canUseDefault: true),
+                       ["", "low", "medium", "high", "xhigh", "custom"])
+
+        let uppercase = ModelSettings(model: nil, effort: "HIGH")
+        let low = ModelSettings(model: nil, effort: "low")
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: low, saved: uppercase, canUseDefault: false),
+                       ClaudeCodeEffort.levels)
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: uppercase, saved: uppercase, canUseDefault: false),
+                       ClaudeCodeEffort.levels + ["HIGH"])
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: low, saved: uppercase, canUseDefault: true),
+                       [""] + ClaudeCodeEffort.levels + ["HIGH"])
+    }
+
+    func testModelSelectionAdjustsOnlyAnUnsupportedKnownCodexEffort() {
+        let cases: [(Provider, String, String?, String, String?)] = [
+            (.codex, "gpt-6.2-sol", "ultra", "gpt-5.5", "medium"),
+            (.codex, "gpt-6.2-sol", "high", "gpt-5.5", "high"),
+            (.codex, "gpt-6.2-sol", nil, "gpt-5.5", nil),
+            (.codex, "gpt-6.2-sol", "custom", "gpt-5.5", "custom"),
+            (.codex, "gpt-6.2-sol", "ultra", "custom-model", "ultra"),
+            (.codex, "gpt-6.2-sol", "ultra", "", "ultra"),
+            (.codex, "gpt-5.5", "ultra", "gpt-5.5", "ultra"),
+            (.claudeCode, "opus", "ultracode", "sonnet", "ultracode")
+        ]
+        for (provider, oldModel, currentEffort, selected, expectedEffort) in cases {
+            let current = ModelSettings(model: oldModel, effort: currentEffort)
+            XCTAssertEqual(provider.selectingModel(selected, in: current),
+                           ModelSettings(model: selected, effort: expectedEffort))
+        }
+    }
+
     func testChangedDefaultsAndPerFieldOverridesReachTheServer() async throws {
         let suite = UUID().uuidString
         let store = try XCTUnwrap(UserDefaults(suiteName: suite))

@@ -53,33 +53,32 @@ final class ChatSessionTests: XCTestCase {
         await withinDeadline("Close session") { await session.close() }
     }
 
-    func testSettingsChangeDuringTurnAppliesToTheNextRequest() async throws {
+    func testSelectingCodexModelDuringTurnAppliesItsCompatibleEffortToTheNextRequest() async throws {
         let server = try MockServer(#"""
-        start({"model":"first","config":{"model_reasoning_effort":"low"}})
-        req = turn(1, model="first", effort="low")
+        start({"model":"gpt-6.2-sol","config":{"model_reasoning_effort":"max"}})
+        req = turn(1, model="gpt-6.2-sol", effort="max")
         response(req,{"turn":{"id":"1"}})
         for _ in range(100):
             if os.path.exists("complete"): break
             time.sleep(.03)
         assert os.path.exists("complete")
         completed(1)
-        req = turn(2, model="second", effort="high")
+        req = turn(2, model="gpt-5.5", effort="medium")
         response(req,{"turn":{"id":"2"}})
         completed(2)
         time.sleep(60)
         """#)
         defer { try? server.remove() }
         let session = ChatSession()
-        let first = ModelSettings(model: "first", effort: "low")
-        let next = ModelSettings(model: "second", effort: "high")
+        let first = ModelSettings(model: "gpt-6.2-sol", effort: "max")
         await session.start(worktree: server.folder, settings: first, executable: server.executable)
         XCTAssertEqual(session.settings, first)
         await session.send("1")
         XCTAssertEqual(session.phase, .running)
-        session.updateSettings(next)
+        session.updateSettings(session.provider.selectingModel("gpt-5.5", in: session.settings))
         await session.start(worktree: server.folder, settings: first, executable: server.executable, provider: .claudeCode)
         XCTAssertEqual(session.provider, .codex)
-        XCTAssertEqual(session.settings, next)
+        XCTAssertEqual(session.settings, ModelSettings(model: "gpt-5.5", effort: "medium"))
         try Data().write(to: server.folder.appendingPathComponent("complete"))
         try await waitFor { session.phase == .ready }
         await session.send("2")

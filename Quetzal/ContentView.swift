@@ -82,15 +82,8 @@ struct StartView: View {
             VStack(alignment: .leading, spacing: 8) {
                 MessageInput(session: session, provider: provider)
                 SessionStatusLine(
-                    provider: provider, providerSelection: $provider,
-                    model: Binding(get: { draft.model ?? defaultModel }, set: { value in
-                        if provider == .codex { codexDraft.model = value }
-                        else { claudeDraft.model = value }
-                    }),
-                    effort: Binding(get: { draft.effort ?? defaultEffort }, set: { value in
-                        if provider == .codex { codexDraft.effort = value }
-                        else { claudeDraft.effort = value }
-                    })
+                    provider: provider, providerSelection: $provider, settings: statusSettings,
+                    saved: ModelSettings(model: defaultModel, effort: defaultEffort)
                 )
                 .id(provider)
                 .disabled(state.isStarting)
@@ -124,6 +117,20 @@ struct StartView: View {
     private var draft: SessionSettingsDraft { provider == .codex ? codexDraft : claudeDraft }
     private var defaultModel: String { provider == .codex ? codexModel : claudeModel }
     private var defaultEffort: String { provider == .codex ? codexEffort : claudeEffort }
+
+    private var statusSettings: Binding<ModelSettings> {
+        let selectedDraft = provider == .codex ? $codexDraft : $claudeDraft
+        return Binding(
+            get: { selectedDraft.wrappedValue.settings(defaultModel: defaultModel, defaultEffort: defaultEffort) },
+            set: { updated in
+                var draft = selectedDraft.wrappedValue
+                let current = draft.settings(defaultModel: defaultModel, defaultEffort: defaultEffort)
+                if current.model != updated.model { draft.model = updated.model ?? "" }
+                if current.effort != updated.effort { draft.effort = updated.effort ?? "" }
+                selectedDraft.wrappedValue = draft
+            }
+        )
+    }
 
     private func startSession() {
         guard let id = state.begin() else { return }
