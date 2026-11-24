@@ -41,20 +41,30 @@ struct ChatView: View {
                     Text(verbatim: notice).foregroundStyle(.red).textSelection(.enabled)
                 }
                 if session.phase != .disconnected {
-                    TextField("Message Codex", text: $session.draft, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(2...6)
-                        .disabled(session.phase != .ready)
-                    HStack {
-                        if session.phase == .sending { Text("Sending…") }
-                        if session.phase == .running { Text("Running…") }
-                        if session.phase == .interrupting { Text("Interrupting…") }
-                        Spacer()
-                        Button("Interrupt") { Task { await session.interrupt() } }
-                            .disabled(!session.canInterrupt)
-                        Button("Send") { Task { await session.send(session.draft) } }
-                            .keyboardShortcut(.return, modifiers: .command)
-                            .disabled(!session.canSend)
+                    if session.phase == .sending { Text("Sending…") }
+                    if session.phase == .running { Text("Running…") }
+                    if session.phase == .interrupting { Text("Interrupting…") }
+                    HStack(alignment: .bottom, spacing: 8) {
+                        TextField("Message Codex", text: $session.draft, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                            .lineLimit(2...6)
+                            .disabled(session.phase != .ready)
+
+                        let showsInterrupt = session.phase == .sending || session.phase == .running || session.phase == .interrupting
+                        let title: LocalizedStringKey = showsInterrupt ? "Interrupt" : "Send"
+                        Button(title, systemImage: showsInterrupt ? "stop.fill" : "paperplane.fill") {
+                            Task {
+                                if showsInterrupt {
+                                    await session.interrupt()
+                                } else {
+                                    await session.send(session.draft)
+                                }
+                            }
+                        }
+                        .labelStyle(.iconOnly)
+                        .help(title)
+                        .keyboardShortcut(showsInterrupt ? nil : KeyboardShortcut(.return, modifiers: .command))
+                        .disabled(showsInterrupt ? !session.canInterrupt : !session.canSend)
                     }
                 }
             }
