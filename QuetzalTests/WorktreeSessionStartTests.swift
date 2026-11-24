@@ -78,6 +78,64 @@ final class WorktreeSessionStartTests: XCTestCase {
         XCTAssertEqual(selectionID(state.target), selectionID(original))
     }
 
+    func testRequestDuringSessionWaitsForConfirmation() throws {
+        let repository = repository(["/temporary/main", "/temporary/feature"])
+        let state = WorktreeSessionStart()
+        let current = try target("/temporary/main", in: repository)
+        state.request(current, sessionActive: false)
+
+        let next = try target("/temporary/feature", in: repository)
+        state.request(next, sessionActive: true)
+        XCTAssertEqual(selectionID(state.pendingTarget), selectionID(next))
+        XCTAssertEqual(selectionID(state.target), selectionID(current))
+        XCTAssertEqual(state.selectedItem, next.item)
+    }
+
+    func testConfirmingSwitchUsesGivenTargetInEitherOrder() throws {
+        let repository = repository(["/temporary/main", "/temporary/feature"])
+        for buttonFirst in [true, false] {
+            let state = WorktreeSessionStart()
+            state.request(try target("/temporary/main", in: repository), sessionActive: false)
+            let next = try target("/temporary/feature", in: repository)
+            state.request(next, sessionActive: true)
+
+            if buttonFirst {
+                state.confirmSwitch(to: next)
+                state.cancelSwitch()
+            } else {
+                state.cancelSwitch()
+                state.confirmSwitch(to: next)
+            }
+            XCTAssertEqual(selectionID(state.target), selectionID(next))
+            XCTAssertNil(state.pendingTarget)
+            XCTAssertEqual(state.selectedItem, next.item)
+        }
+    }
+
+    func testCancellingSwitchKeepsCurrentTarget() throws {
+        let repository = repository(["/temporary/main", "/temporary/feature"])
+        let state = WorktreeSessionStart()
+        let current = try target("/temporary/main", in: repository)
+        state.request(current, sessionActive: false)
+        state.request(try target("/temporary/feature", in: repository), sessionActive: true)
+
+        state.cancelSwitch()
+        XCTAssertEqual(selectionID(state.target), selectionID(current))
+        XCTAssertNil(state.pendingTarget)
+        XCTAssertEqual(state.selectedItem, current.item)
+    }
+
+    func testRequestingSameTargetDuringSessionDoesNotAskToSwitch() throws {
+        let repository = repository(["/temporary/main"])
+        let state = WorktreeSessionStart()
+        state.request(try target("/temporary/main", in: repository), sessionActive: false)
+        XCTAssertNotNil(state.begin())
+
+        state.request(try target("/temporary/main", in: repository), sessionActive: true)
+        XCTAssertNil(state.pendingTarget)
+        XCTAssertTrue(state.isStarting)
+    }
+
     func testRequestingAnotherTargetDuringValidationDiscardsIt() async throws {
         let repository = repository(["/temporary/main", "/temporary/feature"])
         for outcome in [Result<URL, Error>.success(URL(fileURLWithPath: "/temporary/main")), .failure(CocoaError(.fileNoSuchFile))] {
@@ -143,6 +201,14 @@ final class WorktreeSessionStartTests: XCTestCase {
         state.finish(id, error: "Choose a file with execute permission.")
         state.repositoryOpened()
         XCTAssertNil(state.error)
+
+        state.request(try target("/temporary/main", in: repository), sessionActive: false)
+        state.request(try target("/temporary/other", in: self.repository(["/temporary/other"])), sessionActive: true)
+        XCTAssertNotNil(state.pendingTarget)
+        state.repositoryOpened()
+        XCTAssertNil(state.target)
+        XCTAssertNil(state.pendingTarget)
+        XCTAssertNil(state.selectedItem)
     }
 
     func testTargetForListItem() throws {

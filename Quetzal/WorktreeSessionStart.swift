@@ -52,17 +52,33 @@ final class WorktreeSessionStart {
     }
 
     private(set) var target: WorkTarget?
+    private(set) var pendingTarget: WorkTarget?
     private(set) var error: String?
     private var attempt: Attempt?
     @ObservationIgnored private var task: Task<Void, Never>?
 
     var isStarting: Bool { attempt != nil }
-    var selectedItem: WorktreeListItem? { target?.item }
+    var selectedItem: WorktreeListItem? { (pendingTarget ?? target)?.item }
     var canStart: Bool { target?.selection != nil && !isStarting }
 
-    func request(_ target: WorkTarget, sessionActive: Bool) {
-        guard !sessionActive else { return }
-        select(target)
+    func request(_ next: WorkTarget, sessionActive: Bool) {
+        if let target, target.isSame(as: next) { return }
+        if sessionActive {
+            pendingTarget = next
+        } else {
+            select(next)
+        }
+    }
+
+    // アラートのボタンの処理と isPresented の setter（cancelSwitch）はどちらが先に
+    // 走るか決まっていないので、pendingTarget を読まずに渡された作業先へ切り替える。
+    func confirmSwitch(to next: WorkTarget) {
+        pendingTarget = nil
+        select(next)
+    }
+
+    func cancelSwitch() {
+        pendingTarget = nil
     }
 
     func begin() -> UUID? {
@@ -82,6 +98,7 @@ final class WorktreeSessionStart {
     func repositoryOpened() {
         invalidate()
         target = nil
+        pendingTarget = nil
         error = nil
     }
 

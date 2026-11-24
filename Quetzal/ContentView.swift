@@ -28,10 +28,34 @@ struct ContentView: View {
             }
             .frame(minWidth: 520, minHeight: 380)
         }
+        .alert("End the current session?", isPresented: switchAlert, presenting: worktreeStart.pendingTarget) { target in
+            Button("End Session", role: .destructive) {
+                // 先に作業先を切り替える。close() を先に待つと、その間に古い作業先の開始画面が出る。
+                worktreeStart.confirmSwitch(to: target)
+                Task { await session.close() }
+            }
+            Button("Cancel", role: .cancel) { worktreeStart.cancelSwitch() }
+        } message: { target in
+            Text(switchMessage(target))
+        }
         .onDisappear {
             sidebar.cancel()
             Task { await session.close() }
         }
+    }
+
+    private func switchMessage(_ target: WorkTarget) -> String {
+        switch target {
+        case .existing(let selection):
+            "Switch to \(selection.worktree.directory.path). The current conversation will close and can't be restored."
+        }
+    }
+
+    private var switchAlert: Binding<Bool> {
+        Binding(
+            get: { worktreeStart.pendingTarget != nil },
+            set: { if !$0 { worktreeStart.cancelSwitch() } }
+        )
     }
 }
 
