@@ -7,7 +7,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading) {
-                    Text("Codex").font(.headline)
+                    Text(session.provider.rawValue).font(.headline)
                     Text(session.worktree?.path ?? "").foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 Spacer()
@@ -45,7 +45,7 @@ struct ChatView: View {
                     if session.phase == .running { Text("Running…") }
                     if session.phase == .interrupting { Text("Interrupting…") }
                     HStack(alignment: .bottom, spacing: 8) {
-                        TextField("Message Codex", text: $session.draft, axis: .vertical)
+                        TextField("Message \(session.provider.rawValue)", text: $session.draft, axis: .vertical)
                             .textFieldStyle(.roundedBorder)
                             .lineLimit(2...6)
                             .disabled(session.phase != .ready)
