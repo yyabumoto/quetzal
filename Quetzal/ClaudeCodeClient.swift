@@ -282,7 +282,8 @@ actor ClaudeCodeClient: AgentClient {
 
     private func appendStderr(_ chunk: Data) {
         stderrTail.append(chunk)
-        if stderrTail.count > 4096 { stderrTail.removeFirst(stderrTail.count - 4096) }
+        // removeFirst は先頭をずらすだけで領域を手放さないので、末尾だけを新しい Data に写す。
+        if stderrTail.count > 4096 { stderrTail = Data(stderrTail.suffix(4096)) }
     }
 
     private func stderrEnded() {
