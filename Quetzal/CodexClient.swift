@@ -1,8 +1,8 @@
 import Foundation
 
 actor CodexClient {
-    nonisolated let events: AsyncThrowingStream<CodexEvent, Error>
-    private let stream: AsyncThrowingStream<CodexEvent, Error>.Continuation
+    nonisolated let events: AsyncThrowingStream<AgentEvent, Error>
+    private let stream: AsyncThrowingStream<AgentEvent, Error>.Continuation
     private let executable: URL
     private let environment: [String: String]
     private let writer = DispatchQueue(label: "Quetzal.Codex.stdin")
@@ -24,23 +24,9 @@ actor CodexClient {
         (events, stream) = AsyncThrowingStream.makeStream()
     }
 
-    nonisolated static func findExecutable() -> URL? {
-        let manager = FileManager.default
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        let dirs = path.split(separator: ":").map(String.init) + [
-            manager.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
-            "/opt/homebrew/bin", "/usr/local/bin"
-        ]
-        return dirs.lazy.filter { $0.hasPrefix("/") }.map {
-            URL(fileURLWithPath: $0).appendingPathComponent("codex")
-        }.first(where: { isExecutable($0) })
-    }
+    nonisolated static func findExecutable() -> URL? { ChildProcess.find("codex") }
 
-    nonisolated static func isExecutable(_ url: URL) -> Bool {
-        var directory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
-            && !directory.boolValue && FileManager.default.isExecutableFile(atPath: url.path)
-    }
+    nonisolated static func isExecutable(_ url: URL) -> Bool { ChildProcess.isExecutable(url) }
 
     func start(worktree: URL, settings: ModelSettings) async throws -> String {
         guard process == nil, !finished else { throw CodexFailure.disconnected }
@@ -94,7 +80,7 @@ actor CodexClient {
         reader = Task.detached { [weak self] in
             defer { try? output.close() }
             var buffer = Data()
-            while !Task.isCancelled, let chunk = await Self.readChunk(output, child: child, queue: readQueue) {
+            while !Task.isCancelled, let chunk = await ChildProcess.readChunk(output, child: child, queue: readQueue) {
                 buffer.append(chunk)
                 while let newline = buffer.firstIndex(of: 10) {
                     let line = Data(buffer[..<newline])
@@ -103,24 +89,6 @@ actor CodexClient {
                 }
             }
             await self?.finish(buffer.isEmpty ? CodexFailure.disconnected : CodexFailure.malformed)
-        }
-    }
-
-    private nonisolated static func readChunk(_ output: FileHandle, child: Process, queue: DispatchQueue) async -> Data? {
-        await withCheckedContinuation { continuation in
-            queue.async {
-                var descriptor = pollfd(fd: output.fileDescriptor, events: Int16(POLLIN), revents: 0)
-                let ready = poll(&descriptor, 1, 200)
-                if ready == 0 {
-                    // 子孫が stdout を継承していても、直接の子が終了したら読み取りを終える。
-                    return continuation.resume(returning: child.isRunning ? Data() : nil)
-                }
-                if ready < 0 { return continuation.resume(returning: errno == EINTR ? Data() : nil) }
-                var bytes = [UInt8](repeating: 0, count: 16384)
-                let count = Darwin.read(output.fileDescriptor, &bytes, bytes.count)
-                if count < 0 && errno == EINTR { return continuation.resume(returning: Data()) }
-                continuation.resume(returning: count > 0 ? Data(bytes.prefix(count)) : nil)
-            }
         }
     }
 
@@ -194,7 +162,7 @@ actor CodexClient {
                 if message.fields?["id"] != nil {
                     guard let id else { throw CodexFailure.malformed }
                     try await serverRequest(method, id: id, params: message["params"])
-                } else if let event = try CodexEvent.notification(method, message["params"]) {
+                } else if let event = try AgentEvent.notification(method, message["params"]) {
                     publish(event)
                 }
             } else {
@@ -238,7 +206,7 @@ actor CodexClient {
         stream.yield(.approval(approval))
     }
 
-    private func publish(_ event: CodexEvent) {
+    private func publish(_ event: AgentEvent) {
         switch event {
         case let .started(thread, turn):
             if !terminalTurns.contains(turn) { turns[thread] = turn }
@@ -294,3 +262,5 @@ actor CodexClient {
         await shutdown?.value
     }
 }
+
+extension CodexClient: AgentClient {}

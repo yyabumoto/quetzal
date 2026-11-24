@@ -23,7 +23,7 @@ final class ChatSession {
     var draft = ""
 
     @ObservationIgnored private var generation = UUID()
-    @ObservationIgnored private var client: CodexClient?
+    @ObservationIgnored private var client: (any AgentClient)?
     @ObservationIgnored private var subscription: Task<Void, Never>?
     @ObservationIgnored private var settings = ModelSettings(model: nil, effort: nil)
     @ObservationIgnored private var threadID: String?
@@ -152,7 +152,7 @@ final class ChatSession {
         phase = .running
     }
 
-    private func consume(_ event: CodexEvent) {
+    private func consume(_ event: AgentEvent) {
         guard phase != .disconnected else { return }
         switch event {
         case let .started(thread, turn) where thread == threadID:

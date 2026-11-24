@@ -175,7 +175,18 @@ nonisolated struct ApprovalRequest: Identifiable, Equatable, Sendable {
     }
 }
 
-nonisolated enum CodexEvent: Sendable {
+nonisolated protocol AgentClient: Actor {
+    nonisolated var events: AsyncThrowingStream<AgentEvent, Error> { get }
+    /// 会話を開き、その ID（Codex は thread ID、Claude Code は session ID）を返す。
+    func start(worktree: URL, settings: ModelSettings) async throws -> String
+    /// 依頼を 1 件送り、その依頼の ID を返す。
+    func startTurn(threadID: String, text: String, effort: String?) async throws -> String
+    func interrupt(threadID: String, turnID: String) async throws
+    func answer(_ request: ApprovalRequest, allow: Bool) async throws
+    func close() async
+}
+
+nonisolated enum AgentEvent: Sendable {
     case started(thread: String, turn: String)
     case completed(thread: String, turn: String, status: String, error: String?)
     case message(ItemKey, text: String, final: Bool)
