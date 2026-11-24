@@ -215,7 +215,7 @@ nonisolated protocol AgentClient: Actor {
     /// 会話を開き、その ID（Codex は thread ID、Claude Code は session ID）を返す。
     func start(worktree: URL, settings: ModelSettings) async throws -> String
     /// 依頼を 1 件送り、その依頼の ID を返す。
-    func startTurn(threadID: String, text: String, effort: String?) async throws -> String
+    func startTurn(threadID: String, text: String, settings: ModelSettings) async throws -> String
     func interrupt(threadID: String, turnID: String) async throws
     func answer(_ request: ApprovalRequest, allow: Bool) async throws
     func close() async

@@ -19,13 +19,20 @@ struct ClaudeMockServer {
         def line(message): return (json.dumps(message, ensure_ascii=False) + "\\n").encode()
         def send(message): os.write(1, line(message))
         def burst(*messages): os.write(1, b"".join(line(m) for m in messages))
-        def respond(request, response=None, error=None):
+        def respond(request, response=None, error=None, code=None):
             body = {"subtype":"success","request_id":request["request_id"],"response":response or {}}
-            if error: body = {"subtype":"error","request_id":request["request_id"],"error":error}
+            if error is not None: body = {"subtype":"error","request_id":request["request_id"],"error":error}
+            if code is not None: body["error_code"] = code
             send({"type":"control_response","response":body})
+        def control(subtype, **fields):
+            req = read()
+            assert req["type"] == "control_request" and req["request"] == dict(fields, subtype=subtype), req
+            return req
+        def confirmed(model=None, effort=None, **extra):
+            respond(control("get_settings"), {"applied": dict(extra, model=model, effort=effort)})
         def hook(hook_id, started=True):
             return {"type":"system","subtype":"hook_started" if started else "hook_response","hook_id":hook_id,"hook_event":"SessionStart"}
-        def start(model=None, effort=None, settings=None, instructions=None, hook_seconds=None):
+        def start(model=None, effort=None, settings=None, instructions=None, hook_seconds=None, models=None, confirm=True):
             global sid
             args = sys.argv[1:]
             sid = args[args.index("--session-id") + 1]
@@ -46,7 +53,8 @@ struct ClaudeMockServer {
                 send(hook("h1"))
                 time.sleep(hook_seconds)
                 send(hook("h1", started=False))
-            respond(req, {"commands":[],"pid":os.getpid()})
+            respond(req, {"commands":[],"pid":os.getpid(),"models":models or []})
+            if confirm and (model is not None or effort is not None): confirmed(model, effort)
         def init(cwd=None): return {"type":"system","subtype":"init","cwd":cwd or os.getcwd(),"session_id":sid,"tools":[]}
         def user(n):
             req = read()
@@ -150,6 +158,163 @@ final class ClaudeCodeClientTests: XCTestCase {
         }
     }
 
+    func testStartupChecksResolvedModelAndEffort() async throws {
+        let server = try ClaudeMockServer(#"""
+        start(model="sonnet", effort="ultracode", models=[{"value":"sonnet","resolvedModel":"claude-sonnet"}], confirm=False)
+        confirmed(model="claude-sonnet", effort="xhigh", ultracode=True)
+        user(1)
+        send(result())
+        wait()
+        """#)
+        defer { try? server.remove() }
+        let settings = ModelSettings(model: "sonnet", effort: "ultracode")
+        let client = server.client()
+        let thread = try await client.start(worktree: server.folder, settings: settings)
+        var events = client.events.makeAsyncIterator()
+        _ = try await client.startTurn(threadID: thread, text: "1", settings: settings)
+        try await expect(&events, "completed 1 completed")
+        await client.close()
+    }
+
+    func testStartupRejectsModelFallbackAndMismatchedEffort() async throws {
+        let cases: [(ModelSettings, String, String)] = [
+            (ModelSettings(model: "haiku", effort: nil), #"""
+            start(model="haiku", confirm=False)
+            confirmed(model="sonnet")
+            respond(control("set_model", model="haiku"), error="Restricted model", code="restricted_by_org")
+            wait()
+            """#, "Restricted model"),
+            (ModelSettings(model: nil, effort: "low"), #"""
+            start(effort="low", confirm=False)
+            confirmed(effort="medium")
+            wait()
+            """#, "Claude Code reported effort medium")
+        ]
+        for (requested, program, expected) in cases {
+            let server = try ClaudeMockServer(program)
+            defer { try? server.remove() }
+            let client = server.client()
+            let error = await failure { _ = try await client.start(worktree: server.folder, settings: requested) }
+            XCTAssertTrue(error?.contains(expected) == true, error ?? "Started with different settings")
+            await client.close()
+        }
+    }
+
+    func testStartupCanUseFlagsWhenOlderCLIDoesNotReportSettings() async throws {
+        let server = try ClaudeMockServer(#"""
+        start(model="sonnet", confirm=False)
+        respond(control("get_settings"), error="Unsupported control request subtype: get_settings")
+        user(1)
+        send(result())
+        wait()
+        """#)
+        defer { try? server.remove() }
+        let settings = ModelSettings(model: "sonnet", effort: nil)
+        let client = server.client()
+        let thread = try await client.start(worktree: server.folder, settings: settings)
+        var events = client.events.makeAsyncIterator()
+        _ = try await client.startTurn(threadID: thread, text: "1", settings: settings)
+        try await expect(&events, "completed 1 completed")
+        await client.close()
+    }
+
+    func testSettingsChangeIsAcknowledgedBeforeUserMessageAndKeepsSession() async throws {
+        let server = try ClaudeMockServer(#"""
+        start(model="sonnet", effort="low")
+        user(1)
+        send(result())
+        respond(control("set_model", model="haiku"))
+        respond(control("apply_flag_settings", settings={"effortLevel":"high"}))
+        confirmed(model="claude-haiku", effort="high")
+        user(2)
+        send(result())
+        user(3)
+        send(result())
+        wait()
+        """#)
+        defer { try? server.remove() }
+        let initial = ModelSettings(model: "sonnet", effort: "low")
+        let updated = ModelSettings(model: "haiku", effort: "high")
+        let client = server.client()
+        let thread = try await client.start(worktree: server.folder, settings: initial)
+        var events = client.events.makeAsyncIterator()
+        for (turn, settings) in [initial, updated, updated].enumerated() {
+            let number = String(turn + 1)
+            _ = try await client.startTurn(threadID: thread, text: number, settings: settings)
+            let event = try await next(&events)
+            guard case let .completed(sessionID, turnID, status, _) = event else { return XCTFail("Expected completion") }
+            XCTAssertEqual(sessionID, thread)
+            XCTAssertEqual(turnID, number)
+            XCTAssertEqual(status, "completed")
+        }
+        await client.close()
+    }
+
+    func testRejectedModelCanBeCorrectedWithoutSubmittingTheDraft() async throws {
+        let server = try ClaudeMockServer(#"""
+        start()
+        respond(control("set_model", model="restricted"), error="Restricted model", code="restricted_by_org")
+        respond(control("set_model", model="sonnet"))
+        user(1)
+        send(result())
+        wait()
+        """#)
+        defer { try? server.remove() }
+        let client = server.client()
+        let thread = try await client.start(worktree: server.folder, settings: settings)
+        let unavailable = ModelSettings(model: "restricted", effort: nil)
+        let error = await failure { _ = try await client.startTurn(threadID: thread, text: "not submitted", settings: unavailable) }
+        XCTAssertEqual(error, "Restricted model")
+        let available = ModelSettings(model: "sonnet", effort: nil)
+        var events = client.events.makeAsyncIterator()
+        _ = try await client.startTurn(threadID: thread, text: "1", settings: available)
+        try await expect(&events, "completed 1 completed")
+        await client.close()
+    }
+
+    func testRejectedEffortAfterModelChangeClosesWithoutSubmittingTheDraft() async throws {
+        let server = try ClaudeMockServer(#"""
+        start()
+        respond(control("set_model", model="sonnet"))
+        respond(control("apply_flag_settings", settings={"effortLevel":"high"}), error="Rejected effort")
+        assert sys.stdin.readline() == ""
+        """#)
+        defer { try? server.remove() }
+        let client = server.client()
+        let thread = try await client.start(worktree: server.folder, settings: settings)
+        let proposed = ModelSettings(model: "sonnet", effort: "high")
+        let rejection = await failure { _ = try await client.startTurn(threadID: thread, text: "not submitted", settings: proposed) }
+        XCTAssertEqual(rejection, "Rejected effort")
+        let retry = await failure { _ = try await client.startTurn(threadID: thread, text: "retry", settings: proposed) }
+        XCTAssertEqual(retry, ClaudeCodeFailure.disconnected.localizedDescription)
+        await client.close()
+    }
+
+    func testPendingSettingsRequestRejectsConcurrentSendAndTimesOut() async throws {
+        let server = try ClaudeMockServer(#"""
+        start()
+        control("set_model", model="sonnet")
+        with open("pending", "w"): pass
+        assert sys.stdin.readline() == ""
+        """#)
+        defer { try? server.remove() }
+        let client = server.client(startupTimeout: .seconds(2))
+        let thread = try await client.start(worktree: server.folder, settings: settings)
+        let selected = ModelSettings(model: "sonnet", effort: nil)
+        let first = Task { try await client.startTurn(threadID: thread, text: "first", settings: selected) }
+        let marker = server.folder.appendingPathComponent("pending").path
+        let deadline = ContinuousClock.now + .seconds(1)
+        while !FileManager.default.fileExists(atPath: marker), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker))
+        let busy = await failure { _ = try await client.startTurn(threadID: thread, text: "second", settings: selected) }
+        XCTAssertEqual(busy, "A request is already running.")
+        let timeout = await failure { _ = try await first.value }
+        XCTAssertTrue(timeout?.contains("did not confirm the session settings") == true, timeout ?? "Submitted the request")
+        await client.close()
+    }
+
     func testStreamedTextFinalBlocksAndTwoTurns() async throws {
         let server = try ClaudeMockServer(#"""
         start()
@@ -179,7 +344,7 @@ final class ClaudeCodeClientTests: XCTestCase {
         let client = server.client()
         var events = client.events.makeAsyncIterator()
         let session = try await client.start(worktree: server.folder, settings: settings)
-        let first = try await client.startTurn(threadID: session, text: "1", effort: nil)
+        let first = try await client.startTurn(threadID: session, text: "1", settings: settings)
         XCTAssertEqual(first, "1")
         var seen: [String] = []
         while true {
@@ -192,9 +357,9 @@ final class ClaudeCodeClientTests: XCTestCase {
             "message 1 m1:0 犬", "message 1 m1:0 !", "message 1 m1:1 second", "message 1 m1:0 犬! final",
             "message 1 m1:1 second! final", "message 1 m2:final-1 final only final", "completed 1 completed"
         ])
-        let second = try await client.startTurn(threadID: session, text: "2", effort: nil)
+        let second = try await client.startTurn(threadID: session, text: "2", settings: settings)
         XCTAssertEqual(second, "2")
-        let busy = await failure { _ = try await client.startTurn(threadID: session, text: "3", effort: nil) }
+        let busy = await failure { _ = try await client.startTurn(threadID: session, text: "3", settings: settings) }
         XCTAssertEqual(busy, "A request is already running.")
         seen = []
         while true {
@@ -220,7 +385,7 @@ final class ClaudeCodeClientTests: XCTestCase {
         var events = client.events.makeAsyncIterator()
         _ = try await client.start(worktree: server.folder, settings: settings)
         // パイプの容量を超える依頼にして、モックが読み終えるまで書き込みが終わらないようにする。
-        let turn = try await client.startTurn(threadID: "", text: String(repeating: "a", count: 1 << 20), effort: nil)
+        let turn = try await client.startTurn(threadID: "", text: String(repeating: "a", count: 1 << 20), settings: settings)
         XCTAssertEqual(turn, "1")
         try await expect(&events, "message 1 m:0 fast")
         try await expect(&events, "completed 1 completed")
@@ -263,7 +428,7 @@ final class ClaudeCodeClientTests: XCTestCase {
             case .approval(let request) where request.id == .string("early"):
                 XCTAssertEqual(request.key.turn, "")
                 early = request
-                _ = try await client.startTurn(threadID: "", text: "1", effort: nil)
+                _ = try await client.startTurn(threadID: "", text: "1", settings: settings)
             case .approval(let request) where request.id == .string("a"):
                 XCTAssertEqual(request.key.item, "use-a")
                 try await client.answer(request, allow: true)
@@ -326,24 +491,24 @@ final class ClaudeCodeClientTests: XCTestCase {
         let client = server.client()
         var events = client.events.makeAsyncIterator()
         let session = try await client.start(worktree: server.folder, settings: settings)
-        let first = try await client.startTurn(threadID: session, text: "1", effort: nil)
+        let first = try await client.startTurn(threadID: session, text: "1", settings: settings)
         try await expect(&events, "message 1 m:0 partial")
         try await client.interrupt(threadID: session, turnID: first)
         try await expect(&events, "completed 1 interrupted")
-        let second = try await client.startTurn(threadID: session, text: "2", effort: nil)
+        let second = try await client.startTurn(threadID: session, text: "2", settings: settings)
         let rejected = await failure { try await client.interrupt(threadID: session, turnID: second) }
         XCTAssertEqual(rejected, "Cannot interrupt now")
         try await expect(&events, "completed 2 failed Stopped")
         for (number, expected) in [(3, "Tool crashed"), (4, "API Error: 500"), (5, "error_max_turns"), (6, "one\ntwo")] {
-            _ = try await client.startTurn(threadID: session, text: String(number), effort: nil)
+            _ = try await client.startTurn(threadID: session, text: String(number), settings: settings)
             try await expect(&events, "completed \(number) failed \(expected)")
         }
         // 送っていれば、モックは次の依頼の代わりに中断の制御要求を読んで失敗する。
         try await client.interrupt(threadID: session, turnID: "6")
-        _ = try await client.startTurn(threadID: session, text: "7", effort: nil)
+        _ = try await client.startTurn(threadID: session, text: "7", settings: settings)
         try await expect(&events, "completed 7 completed")
         // result を中断の応答より先に処理しても、中断を求めた依頼として扱う。
-        let eighth = try await client.startTurn(threadID: session, text: "8", effort: nil)
+        let eighth = try await client.startTurn(threadID: session, text: "8", settings: settings)
         try await client.interrupt(threadID: session, turnID: eighth)
         try await expect(&events, "completed 8 interrupted")
         await withinDeadline("Close session") { await client.close() }
@@ -417,9 +582,9 @@ final class ClaudeCodeClientTests: XCTestCase {
             let client = server.client()
             var events = client.events.makeAsyncIterator()
             _ = try await client.start(worktree: server.folder, settings: self.settings)
-            _ = try await client.startTurn(threadID: "", text: "1", effort: nil)
+            _ = try await client.startTurn(threadID: "", text: "1", settings: self.settings)
             try await self.expect(&events, "completed 1 completed")
-            _ = try await client.startTurn(threadID: "", text: "2", effort: nil)
+            _ = try await client.startTurn(threadID: "", text: "2", settings: self.settings)
             let reason = await self.failure { _ = try await events.next() }
             XCTAssertEqual(reason, "Claude Code exited: final reason")
             await client.close()
@@ -464,7 +629,7 @@ final class ClaudeCodeClientTests: XCTestCase {
         let client = server.client()
         var events = client.events.makeAsyncIterator()
         _ = try await client.start(worktree: server.folder, settings: settings)
-        _ = try await client.startTurn(threadID: "", text: "1", effort: nil)
+        _ = try await client.startTurn(threadID: "", text: "1", settings: settings)
         let reason = await failure { _ = try await events.next() }
         XCTAssertEqual(reason, "Claude Code did not open the selected worktree.")
         await withinDeadline("Close session") { await client.close() }

@@ -43,6 +43,9 @@ actor CodexClient {
             try await write(.object(["method": .string("initialized")]))
             var params = ["cwd": JSON.string(worktree.path)]
             params["model"] = settings.model.map(JSON.string)
+            if let effort = settings.effort {
+                params["config"] = .object(["model_reasoning_effort": .string(effort)])
+            }
             let result = try await request("thread/start", params)
             guard let path = result["cwd"].text, let thread = result["thread"]["id"].text,
                   URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
@@ -92,11 +95,12 @@ actor CodexClient {
         }
     }
 
-    func startTurn(threadID: String, text: String, effort: String?) async throws -> String {
+    func startTurn(threadID: String, text: String, settings: ModelSettings) async throws -> String {
         var params: [String: JSON] = ["threadId": .string(threadID), "input": .array([
             .object(["type": .string("text"), "text": .string(text)])
         ])]
-        params["effort"] = effort.map(JSON.string)
+        params["model"] = settings.model.map(JSON.string)
+        params["effort"] = settings.effort.map(JSON.string)
         let result = try await request("turn/start", params)
         guard let turn = result["turn"]["id"].text else {
             finish(CodexFailure.malformed)

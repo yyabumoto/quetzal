@@ -26,13 +26,16 @@ struct MockServer {
             assert read()["method"] == "initialized"
             req = read()
             assert req["method"] == "thread/start" and os.path.samefile(req["params"]["cwd"], os.getcwd())
-            assert set(req["params"]) <= {"cwd","model"}
+            assert set(req["params"]) <= {"cwd","model","config"}
             if expected is not None: assert req["params"] == dict(expected, cwd=req["params"]["cwd"])
             response(req, {"thread":{"id":"t"},"cwd":os.getcwd()})
-        def turn(number):
+        def turn(number, model=None, effort="high"):
             req = read()
             assert req["method"] == "turn/start"
-            assert req["params"] == {"threadId":"t","input":[{"type":"text","text":str(number)}],"effort":"high"}
+            expected = {"threadId":"t","input":[{"type":"text","text":str(number)}]}
+            if model is not None: expected["model"] = model
+            if effort is not None: expected["effort"] = effort
+            assert req["params"] == expected, req
             return req
         def completed(number, status="completed"):
             notify("turn/completed", {"threadId":"t","turn":{"id":str(number),"status":status}})
@@ -51,7 +54,7 @@ final class CodexClientTests: XCTestCase {
     func testOrderedStreamAndTwoTurns() async throws {
         let server = try MockServer(#"""
         start()
-        req = turn(1)
+        req = turn(1, model="test")
         ctx = {"threadId":"t", "turnId":"1"}
         notify("turn/started", {"threadId":"t","turn":{"id":"1"}})
         packets = [
@@ -65,7 +68,7 @@ final class CodexClientTests: XCTestCase {
         os.write(1,data[cut:])
         completed(1)
         response(req,{"turn":{"id":"1"}})
-        req = turn(2)
+        req = turn(2, model="test")
         response(req,{"turn":{"id":"2"}})
         interrupt = read()
         assert interrupt["method"] == "turn/interrupt" and interrupt["params"] == {"threadId":"t","turnId":"2"}
@@ -76,7 +79,7 @@ final class CodexClientTests: XCTestCase {
         let client = server.client()
         var events = client.events.makeAsyncIterator()
         let thread = try await client.start(worktree: server.folder, settings: settings)
-        let first = try await client.startTurn(threadID: thread, text: "1", effort: "high")
+        let first = try await client.startTurn(threadID: thread, text: "1", settings: settings)
         XCTAssertEqual(first, "1")
         guard case .started = try await events.next() else { return XCTFail() }
         for (id, expected, isFinal) in [("a","犬",false), ("b","B",false), ("a","犬!",true)] {
@@ -86,7 +89,7 @@ final class CodexClientTests: XCTestCase {
             XCTAssertEqual(final, isFinal)
         }
         guard case .completed = try await events.next() else { return XCTFail() }
-        let second = try await client.startTurn(threadID: thread, text: "2", effort: "high")
+        let second = try await client.startTurn(threadID: thread, text: "2", settings: settings)
         try await client.interrupt(threadID: thread, turnID: second)
         guard case let .completed(_, _, status, _) = try await events.next() else { return XCTFail() }
         XCTAssertEqual(status, "interrupted")
@@ -96,7 +99,7 @@ final class CodexClientTests: XCTestCase {
     func testFileUpdatesAndIndependentApprovals() async throws {
         let server = try MockServer(#"""
         start()
-        req = turn(1)
+        req = turn(1, model="test")
         response(req,{"turn":{"id":"1"}})
         p = {"threadId":"t","turnId":"1","itemId":"file"}
         send({"id":"file","method":"item/fileChange/requestApproval","params":dict(p,grantRoot="/workspace")})
@@ -122,7 +125,7 @@ final class CodexClientTests: XCTestCase {
         let client = server.client()
         var events = client.events.makeAsyncIterator()
         _ = try await client.start(worktree: server.folder, settings: settings)
-        _ = try await client.startTurn(threadID: "t", text: "1", effort: "high")
+        _ = try await client.startTurn(threadID: "t", text: "1", settings: settings)
         var revisions: [ApprovalRequest] = []
         var commands: [ApprovalRequest] = []
         while let event = try await events.next() {

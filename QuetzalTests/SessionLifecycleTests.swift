@@ -39,7 +39,7 @@ final class SessionLifecycleTests: XCTestCase {
             }
             let client = active.client()
             _ = try await client.start(worktree: active.folder, settings: settings)
-            let turn = try await client.startTurn(threadID: "t", text: "1", effort: settings.effort)
+            let turn = try await client.startTurn(threadID: "t", text: "1", settings: settings)
             XCTAssertEqual(turn, "1")
             await client.close()
             for window in windows { await window.close() }
@@ -57,11 +57,11 @@ final class SessionLifecycleTests: XCTestCase {
         let changed = ModelSettings(model: "updated", effort: "high")
         changed.save(for: .codex, store: store)
         let cases: [(String?, String?, String, String)] = [
-            (nil, nil, #"{"model":"updated"}"#, #"{"effort":"high"}"#),
-            ("custom", nil, #"{"model":"custom"}"#, #"{"effort":"high"}"#),
-            (nil, "low", #"{"model":"updated"}"#, #"{"effort":"low"}"#),
-            ("", nil, "{}", #"{"effort":"high"}"#),
-            (nil, "", #"{"model":"updated"}"#, "{}")
+            (nil, nil, #"{"model":"updated","config":{"model_reasoning_effort":"high"}}"#, #"{"model":"updated","effort":"high"}"#),
+            ("custom", nil, #"{"model":"custom","config":{"model_reasoning_effort":"high"}}"#, #"{"model":"custom","effort":"high"}"#),
+            (nil, "low", #"{"model":"updated","config":{"model_reasoning_effort":"low"}}"#, #"{"model":"updated","effort":"low"}"#),
+            ("", nil, #"{"config":{"model_reasoning_effort":"high"}}"#, #"{"effort":"high"}"#),
+            (nil, "", #"{"model":"updated"}"#, #"{"model":"updated"}"#)
         ]
         for (model, effort, threadOptions, turnOptions) in cases {
             draft.model = model
@@ -77,7 +77,7 @@ final class SessionLifecycleTests: XCTestCase {
             defer { try? server.remove() }
             let client = server.client()
             _ = try await client.start(worktree: server.folder, settings: settings)
-            _ = try await client.startTurn(threadID: "t", text: "1", effort: settings.effort)
+            _ = try await client.startTurn(threadID: "t", text: "1", settings: settings)
             await withinDeadline("Close after server exit") { await client.close() }
             XCTAssertEqual(ModelSettings.defaults(for: .codex, store: store), changed)
         }

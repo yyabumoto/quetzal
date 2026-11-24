@@ -53,6 +53,62 @@ final class ChatSessionTests: XCTestCase {
         await withinDeadline("Close session") { await session.close() }
     }
 
+    func testSettingsChangeDuringTurnAppliesToTheNextRequest() async throws {
+        let server = try MockServer(#"""
+        start({"model":"first","config":{"model_reasoning_effort":"low"}})
+        req = turn(1, model="first", effort="low")
+        response(req,{"turn":{"id":"1"}})
+        for _ in range(100):
+            if os.path.exists("complete"): break
+            time.sleep(.03)
+        assert os.path.exists("complete")
+        completed(1)
+        req = turn(2, model="second", effort="high")
+        response(req,{"turn":{"id":"2"}})
+        completed(2)
+        time.sleep(60)
+        """#)
+        defer { try? server.remove() }
+        let session = ChatSession()
+        let first = ModelSettings(model: "first", effort: "low")
+        let next = ModelSettings(model: "second", effort: "high")
+        await session.start(worktree: server.folder, settings: first, executable: server.executable)
+        XCTAssertEqual(session.settings, first)
+        await session.send("1")
+        XCTAssertEqual(session.phase, .running)
+        session.updateSettings(next)
+        await session.start(worktree: server.folder, settings: first, executable: server.executable, provider: .claudeCode)
+        XCTAssertEqual(session.provider, .codex)
+        XCTAssertEqual(session.settings, next)
+        try Data().write(to: server.folder.appendingPathComponent("complete"))
+        try await waitFor { session.phase == .ready }
+        await session.send("2")
+        try await waitFor { session.phase == .ready }
+        XCTAssertEqual(session.messages.map(\.text), ["1", "2"])
+        await session.close()
+    }
+
+    func testClaudeLeavesUnsentDraftWhenSettingsVerificationDisconnects() async throws {
+        let server = try ClaudeMockServer(#"""
+        start(effort="high")
+        respond(control("apply_flag_settings", settings={"effortLevel":"low"}))
+        confirmed(effort="medium")
+        assert sys.stdin.readline() == ""
+        """#)
+        defer { try? server.remove() }
+        let session = ChatSession()
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
+        XCTAssertEqual(session.phase, .ready)
+        session.updateSettings(ModelSettings(model: nil, effort: "low"))
+        await session.send("not submitted")
+        try await waitFor { session.phase == .disconnected }
+        XCTAssertEqual(session.draft, "not submitted")
+        XCTAssertTrue(session.messages.isEmpty)
+        XCTAssertFalse(session.canEditSettings)
+        XCTAssertTrue(session.notice?.contains("reported effort medium") == true)
+        await session.close()
+    }
+
     func testInterruptBeforeStartReplyAndFailedInterruptAfterCompletion() async throws {
         let server = try MockServer(#"""
         start()
