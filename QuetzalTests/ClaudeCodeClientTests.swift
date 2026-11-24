@@ -209,16 +209,18 @@ final class ClaudeCodeClientTests: XCTestCase {
     func testResultRightAfterRequestBelongsToTurn() async throws {
         let server = try ClaudeMockServer(#"""
         start()
-        req = read()
-        assert req["type"] == "user"
+        time.sleep(.5)
         burst(init(), begin("m"), block(0), delta(0,"fast"), result())
+        req = read()
+        assert req["type"] == "user" and len(req["message"]["content"][0]["text"]) == 1 << 20
         wait()
         """#)
         defer { try? server.remove() }
         let client = server.client()
         var events = client.events.makeAsyncIterator()
         _ = try await client.start(worktree: server.folder, settings: settings)
-        let turn = try await client.startTurn(threadID: "", text: "1", effort: nil)
+        // パイプの容量を超える依頼にして、モックが読み終えるまで書き込みが終わらないようにする。
+        let turn = try await client.startTurn(threadID: "", text: String(repeating: "a", count: 1 << 20), effort: nil)
         XCTAssertEqual(turn, "1")
         try await expect(&events, "message 1 m:0 fast")
         try await expect(&events, "completed 1 completed")
@@ -313,6 +315,11 @@ final class ClaudeCodeClientTests: XCTestCase {
         send(result("error_max_turns", errors=["one","two"]))
         user(7)
         send(result())
+        user(8)
+        r = read()
+        assert r["request"] == {"subtype":"interrupt"}, r
+        burst(result("error_during_execution"),
+            {"type":"control_response","response":{"subtype":"success","request_id":r["request_id"],"response":{}}})
         wait()
         """#)
         defer { try? server.remove() }
@@ -335,6 +342,10 @@ final class ClaudeCodeClientTests: XCTestCase {
         try await client.interrupt(threadID: session, turnID: "6")
         _ = try await client.startTurn(threadID: session, text: "7", effort: nil)
         try await expect(&events, "completed 7 completed")
+        // result を中断の応答より先に処理しても、中断を求めた依頼として扱う。
+        let eighth = try await client.startTurn(threadID: session, text: "8", effort: nil)
+        try await client.interrupt(threadID: session, turnID: eighth)
+        try await expect(&events, "completed 8 interrupted")
         await withinDeadline("Close session") { await client.close() }
     }
 
