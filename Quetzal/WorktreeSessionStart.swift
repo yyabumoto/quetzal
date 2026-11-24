@@ -9,22 +9,26 @@ nonisolated struct WorktreeSelection: Identifiable, Sendable {
 
 nonisolated enum WorkTarget: Sendable {
     case existing(WorktreeSelection)
+    case newWorktree(RepositoryWorktrees)
 
     var item: WorktreeListItem {
         switch self {
         case .existing(let selection): .worktree(selection.worktree.id)
+        case .newWorktree: .newWorktree
         }
     }
 
     var repository: RepositoryWorktrees {
         switch self {
         case .existing(let selection): selection.repository
+        case .newWorktree(let repository): repository
         }
     }
 
     fileprivate var selection: WorktreeSelection? {
         switch self {
         case .existing(let selection): selection
+        case .newWorktree: nil
         }
     }
 
@@ -40,6 +44,8 @@ nonisolated extension RepositoryWorktrees {
         case .worktree(let id):
             entries.first { $0.id == id && !$0.isPrunable }
                 .map { .existing(WorktreeSelection(worktree: $0, repository: self)) }
+        case .newWorktree:
+            .newWorktree(self)
         }
     }
 }

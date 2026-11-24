@@ -48,6 +48,8 @@ struct ContentView: View {
         switch target {
         case .existing(let selection):
             "Switch to \(selection.worktree.directory.path). The current conversation will close and can't be restored."
+        case .newWorktree:
+            "Switch to a new worktree. The current conversation will close and can't be restored."
         }
     }
 
@@ -91,6 +93,10 @@ struct StartView: View {
             LabeledContent("Worktree") {
                 Text(verbatim: selection.worktree.directory.path).textSelection(.enabled)
             }
+        case .newWorktree:
+            LabeledContent("Worktree") { Text("New Worktree") }
+            Text("Quetzal can't create worktrees. Select an existing worktree to start a session.")
+                .foregroundStyle(.secondary)
         }
     }
 

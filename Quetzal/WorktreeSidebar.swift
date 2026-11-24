@@ -3,6 +3,7 @@ import SwiftUI
 
 nonisolated enum WorktreeListItem: Hashable, Sendable {
     case worktree(URL)
+    case newWorktree
 }
 
 struct WorktreeSidebar: View {
@@ -67,6 +68,8 @@ struct WorktreeSidebar: View {
 
     private func worktreeSection(_ repository: RepositoryWorktrees) -> some View {
         Section(folderName) {
+            Label("New Worktree", systemImage: "plus")
+                .tag(WorktreeListItem.newWorktree)
             ForEach(repository.entries) { worktree in
                 VStack(alignment: .leading) {
                     Text(verbatim: worktree.directory.lastPathComponent)

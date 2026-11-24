@@ -224,6 +224,28 @@ final class WorktreeSessionStartTests: XCTestCase {
         XCTAssertNil(repository.target(for: .worktree(URL(fileURLWithPath: "/temporary/other", isDirectory: true))))
     }
 
+    func testNewWorktreeTargetCannotStart() throws {
+        let repository = repository(["/temporary/main"])
+        let state = WorktreeSessionStart()
+        state.request(try XCTUnwrap(repository.target(for: .newWorktree)), sessionActive: false)
+
+        XCTAssertEqual(state.selectedItem, .newWorktree)
+        XCTAssertFalse(state.canStart)
+        XCTAssertNil(state.begin())
+        XCTAssertFalse(state.isStarting)
+    }
+
+    func testTargetForNewWorktree() throws {
+        let repository = repository(["/temporary/main"])
+        let target = try XCTUnwrap(repository.target(for: .newWorktree))
+        guard case .newWorktree(let owner) = target else {
+            return XCTFail("The new worktree item must become a new worktree target.")
+        }
+        XCTAssertEqual(owner.identity, repository.identity)
+        XCTAssertEqual(target.repository.identity, repository.identity)
+        XCTAssertEqual(target.item, .newWorktree)
+    }
+
     private func selection(_ path: String) -> WorktreeSelection {
         let folder = URL(fileURLWithPath: path, isDirectory: true)
         let worktree = GitWorktree(directory: folder, isPrunable: false)
