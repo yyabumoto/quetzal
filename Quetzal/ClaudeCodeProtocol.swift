@@ -15,7 +15,7 @@ nonisolated struct ClaudeCodeFailure: LocalizedError {
 }
 
 nonisolated enum ClaudeCodeEffort {
-    static let levels = ["low", "medium", "high", "xhigh", "max"]
+    static let levels = ["low", "medium", "high", "xhigh", "max", "ultracode"]
 }
 
 nonisolated enum ClaudeCodeArguments {

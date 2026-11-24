@@ -151,7 +151,7 @@ actor ClaudeCodeClient: AgentClient {
             // 古い CLI の起動フラグは、確認できる範囲で上位の設定と矛盾しないときに使う。
             if let selected = settings.effort,
                let override = environment["CLAUDE_CODE_EFFORT_LEVEL"]?.lowercased(),
-               (ClaudeCodeEffort.levels + ["ultracode", "auto", "unset"]).contains(override),
+               (ClaudeCodeEffort.levels + ["auto", "unset"]).contains(override),
                selected.lowercased() != override {
                 throw effortMismatch(selected, actual: override)
             }

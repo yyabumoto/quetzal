@@ -230,15 +230,20 @@ final class ClaudeCodeClientTests: XCTestCase {
         send(result())
         user(3)
         send(result())
+        respond(control("apply_flag_settings", settings={"effortLevel":"ultracode"}))
+        confirmed(model="claude-haiku", effort="xhigh", ultracode=True)
+        user(4)
+        send(result())
         wait()
         """#)
         defer { try? server.remove() }
         let initial = ModelSettings(model: "sonnet", effort: "low")
         let updated = ModelSettings(model: "haiku", effort: "high")
+        let ultracode = ModelSettings(model: "haiku", effort: "ultracode")
         let client = server.client()
         let thread = try await client.start(worktree: server.folder, settings: initial)
         var events = client.events.makeAsyncIterator()
-        for (turn, settings) in [initial, updated, updated].enumerated() {
+        for (turn, settings) in [initial, updated, updated, ultracode].enumerated() {
             let number = String(turn + 1)
             _ = try await client.startTurn(threadID: thread, text: number, settings: settings)
             let event = try await next(&events)
