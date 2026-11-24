@@ -10,7 +10,7 @@ struct ContentView: View {
                 StartView(start: session.start)
             case .connecting:
                 VStack(spacing: 12) {
-                    ProgressView("Starting Codex…")
+                    ProgressView("Starting \(session.provider.rawValue)…")
                     Button("Cancel") { Task { await session.close() } }
                 }
             default:
@@ -23,7 +23,7 @@ struct ContentView: View {
 }
 
 struct StartView: View {
-    let start: (URL, ModelSettings, URL) async -> Void
+    let start: (URL, ModelSettings, URL, Provider) async -> Void
     @State private var provider = Provider.codex
     @State private var worktreeStart = WorktreeSessionStart()
     @State private var codexDraft = SessionSettingsDraft()
@@ -50,17 +50,18 @@ struct StartView: View {
 
     private func startSession(_ settings: ModelSettings) {
         guard let id = worktreeStart.begin() else { return }
-        var executable = CodexClient.findExecutable()
+        let provider = self.provider
+        var executable = provider == .codex ? CodexClient.findExecutable() : ClaudeCodeClient.findExecutable()
         if executable == nil {
             let panel = NSOpenPanel()
-            panel.message = "Choose the Codex CLI executable to start this session."
-            panel.prompt = "Use Codex"
+            panel.message = "Choose the \(provider.rawValue) CLI executable to start this session."
+            panel.prompt = "Use \(provider.rawValue)"
             panel.canChooseDirectories = false
             guard panel.runModal() == .OK, let chosen = panel.url else {
                 worktreeStart.finish(id)
                 return
             }
-            guard CodexClient.isExecutable(chosen) else {
+            guard ChildProcess.isExecutable(chosen) else {
                 worktreeStart.finish(id, error: "Choose a file with execute permission.")
                 return
             }
@@ -73,7 +74,7 @@ struct StartView: View {
         worktreeStart.validateAndStart(id, validate: { selected in
             try await GitWorktreeCatalog().validate(selected.worktree, in: selected.repository)
         }, launch: { directory in
-            await start(directory, settings, executable)
+            await start(directory, settings, executable, provider)
         })
     }
 }
@@ -100,11 +101,10 @@ private struct SessionOptions: View {
         let effort = Binding(get: { draft.effort ?? defaultEffort }, set: { draft.effort = $0 })
         TextField("Model", text: model, prompt: Text("CLI default"))
         TextField("Effort", text: effort, prompt: Text("CLI default"))
-        if provider == .claudeCode { Text("Claude Code sessions are unavailable.") }
         Button("Start Session") {
             start(draft.settings(defaultModel: defaultModel, defaultEffort: defaultEffort))
         }
-        .disabled(!canStart || provider != .codex)
+        .disabled(!canStart)
         .keyboardShortcut(.defaultAction)
     }
 }

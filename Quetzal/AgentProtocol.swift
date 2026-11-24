@@ -98,6 +98,7 @@ nonisolated struct ApprovalRequest: Identifiable, Equatable, Sendable {
         case permissions = "item/permissions/requestApproval"
         case legacyCommand = "execCommandApproval"
         case legacyFile = "applyPatchApproval"
+        case tool = "can_use_tool"
     }
 
     let id: RequestID
@@ -117,8 +118,16 @@ nonisolated struct ApprovalRequest: Identifiable, Equatable, Sendable {
         case .legacyCommand: return "Run command"
         case .file, .legacyFile: return "Change files"
         case .permissions: return "Grant permissions for this turn"
+        case .tool:
+            switch toolName {
+            case "Bash": return "Run command"
+            case "Write", "Edit", "MultiEdit", "NotebookEdit": return "Change files"
+            default: return "Use \(toolName)"
+            }
         }
     }
+
+    private var toolName: String { params["tool_name"].text ?? "" }
 
     private var command: String? {
         if kind == .legacyCommand { return params["command"].elements?.map(\.formatted).joined(separator: " ") }
@@ -133,6 +142,7 @@ nonisolated struct ApprovalRequest: Identifiable, Equatable, Sendable {
     }
 
     var details: [String] {
+        if kind == .tool { return toolDetails }
         var rows: [String] = []
         if let command, !command.isEmpty { rows.append(command) }
         if let cwd = params["cwd"].text { rows.append("Working directory: \(cwd)") }
@@ -146,6 +156,26 @@ nonisolated struct ApprovalRequest: Identifiable, Equatable, Sendable {
         return rows
     }
 
+    private var toolDetails: [String] {
+        let input = params["input"]
+        var rows: [String] = []
+        switch toolName {
+        case "Bash":
+            rows += [input["command"].text, input["description"].text].compactMap { $0 }
+        case "Write", "Edit", "MultiEdit", "NotebookEdit":
+            if let path = input["file_path"].text ?? input["notebook_path"].text { rows.append(path) }
+        case "Skill":
+            if let skill = input["skill"].text { rows.append("Skill: \(skill)") }
+            if let args = input["args"].text { rows.append("Arguments: \(args)") }
+            rows.append("Skills can let Claude use other tools without asking for the rest of this session. Allow only skills you installed yourself.")
+        default:
+            rows.append(input.formatted)
+        }
+        if let reason = params["decision_reason"].text { rows.append(reason) }
+        if let path = params["blocked_path"].text { rows.append("Blocked path: \(path)") }
+        return rows
+    }
+
     var canAllow: Bool {
         switch kind {
         case .command:
@@ -155,6 +185,7 @@ nonisolated struct ApprovalRequest: Identifiable, Equatable, Sendable {
         case .legacyCommand: return hasCommand
         case .file, .legacyFile: return !changes.isEmpty
         case .permissions: return params["permissions"].fields?.isEmpty == false
+        case .tool: return !toolName.isEmpty && params["input"].fields != nil
         }
     }
 
@@ -171,11 +202,26 @@ nonisolated struct ApprovalRequest: Identifiable, Equatable, Sendable {
         case .legacyCommand, .legacyFile:
             let denied: JSON = .object(["denied": .object(["rejection": .string("Declined by user")])])
             return .object(["decision": allow ? .string("approved") : denied])
+        case .tool:
+            let toolUse = params["tool_use_id"]
+            if allow { return .object(["behavior": .string("allow"), "updatedInput": params["input"], "toolUseID": toolUse]) }
+            return .object(["behavior": .string("deny"), "message": .string("The user declined this tool use."), "toolUseID": toolUse])
         }
     }
 }
 
-nonisolated enum CodexEvent: Sendable {
+nonisolated protocol AgentClient: Actor {
+    nonisolated var events: AsyncThrowingStream<AgentEvent, Error> { get }
+    /// 会話を開き、その ID（Codex は thread ID、Claude Code は session ID）を返す。
+    func start(worktree: URL, settings: ModelSettings) async throws -> String
+    /// 依頼を 1 件送り、その依頼の ID を返す。
+    func startTurn(threadID: String, text: String, effort: String?) async throws -> String
+    func interrupt(threadID: String, turnID: String) async throws
+    func answer(_ request: ApprovalRequest, allow: Bool) async throws
+    func close() async
+}
+
+nonisolated enum AgentEvent: Sendable {
     case started(thread: String, turn: String)
     case completed(thread: String, turn: String, status: String, error: String?)
     case message(ItemKey, text: String, final: Bool)

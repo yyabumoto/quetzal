@@ -82,4 +82,32 @@ final class SessionLifecycleTests: XCTestCase {
             XCTAssertEqual(ModelSettings.defaults(for: .codex, store: store), changed)
         }
     }
+
+    func testClaudeDefaultsAndOverridesReachTheCLI() async throws {
+        let suite = UUID().uuidString
+        let store = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { store.removePersistentDomain(forName: suite) }
+        let changed = ModelSettings(model: "updated", effort: "high")
+        changed.save(for: .claudeCode, store: store)
+        var draft = SessionSettingsDraft()
+        let cases: [(String?, String?, String, String)] = [
+            (nil, nil, #""updated""#, #""high""#),
+            ("custom", nil, #""custom""#, #""high""#),
+            (nil, "low", #""updated""#, #""low""#),
+            ("", nil, "None", #""high""#),
+            (nil, "", #""updated""#, "None")
+        ]
+        for (model, effort, expectedModel, expectedEffort) in cases {
+            draft.model = model
+            draft.effort = effort
+            let settings = draft.settings(defaultModel: store.string(forKey: Provider.claudeCode.key("model")) ?? "",
+                                          defaultEffort: store.string(forKey: Provider.claudeCode.key("effort")) ?? "")
+            let server = try ClaudeMockServer("start(model=\(expectedModel), effort=\(expectedEffort))\nwait()")
+            defer { try? server.remove() }
+            let client = server.client()
+            _ = try await client.start(worktree: server.folder, settings: settings)
+            await withinDeadline("Close session") { await client.close() }
+            XCTAssertEqual(ModelSettings.defaults(for: .claudeCode, store: store), changed)
+        }
+    }
 }

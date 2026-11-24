@@ -8,13 +8,14 @@ final class ChatSession {
     }
 
     struct Message: Identifiable {
-        enum Author: String { case user = "You", codex = "Codex", status = "Session" }
+        enum Author: String { case user = "You", codex = "Codex", claude = "Claude", status = "Session" }
         let id = UUID()
         let author: Author
         var text: String
     }
 
     private(set) var phase: Phase = .setup
+    private(set) var provider: Provider = .codex
     private(set) var worktree: URL?
     private(set) var messages: [Message] = []
     private(set) var approvals: [ApprovalRequest] = []
@@ -23,7 +24,7 @@ final class ChatSession {
     var draft = ""
 
     @ObservationIgnored private var generation = UUID()
-    @ObservationIgnored private var client: CodexClient?
+    @ObservationIgnored private var client: (any AgentClient)?
     @ObservationIgnored private var subscription: Task<Void, Never>?
     @ObservationIgnored private var settings = ModelSettings(model: nil, effort: nil)
     @ObservationIgnored private var threadID: String?
@@ -36,12 +37,18 @@ final class ChatSession {
     var canSend: Bool { phase == .ready && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var canInterrupt: Bool { phase == .running && turnID != nil }
 
-    func start(worktree: URL, settings: ModelSettings, executable: URL) async {
+    func start(worktree: URL, settings: ModelSettings, executable: URL, provider: Provider = .codex) async {
         guard phase == .setup else { return }
         phase = .connecting
+        self.provider = provider
         self.settings = settings
         self.worktree = worktree
-        let connection = CodexClient(executable: executable)
+        let project = provider == .claudeCode ? ClaudeCodeProject.load(in: worktree) : nil
+        let connection: any AgentClient = if let project {
+            ClaudeCodeClient(executable: executable, project: project)
+        } else {
+            CodexClient(executable: executable)
+        }
         client = connection
         let token = generation
         subscription = Task { [weak self] in
@@ -60,6 +67,12 @@ final class ChatSession {
             guard generation == token, phase == .connecting else { return }
             threadID = thread
             phase = .ready
+            if let project, !project.ignoredFiles.isEmpty {
+                var text = "Project settings in this worktree are not applied, except permission deny and ask rules: "
+                    + project.ignoredFiles.joined(separator: ", ") + "."
+                if !project.unreadableFiles.isEmpty { text += " Could not read: " + project.unreadableFiles.joined(separator: ", ") + "." }
+                messages.append(Message(author: .status, text: text))
+            }
         } catch {
             if generation == token { disconnect(error) }
         }
@@ -152,7 +165,7 @@ final class ChatSession {
         phase = .running
     }
 
-    private func consume(_ event: CodexEvent) {
+    private func consume(_ event: AgentEvent) {
         guard phase != .disconnected else { return }
         switch event {
         case let .started(thread, turn) where thread == threadID:
@@ -163,7 +176,7 @@ final class ChatSession {
                 if final { messages[index].text = text } else { messages[index].text += text }
             } else {
                 messageIndices[key] = messages.count
-                messages.append(Message(author: .codex, text: text))
+                messages.append(Message(author: provider == .codex ? .codex : .claude, text: text))
             }
         case let .approval(request) where request.key.thread == threadID && !completed.contains(request.key.turn):
             if !request.key.turn.isEmpty { began(request.key.turn) }

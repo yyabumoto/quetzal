@@ -140,4 +140,168 @@ final class ChatSessionTests: XCTestCase {
         XCTAssertEqual(session.worktree, next.folder)
         await withinDeadline("Close session") { await session.close() }
     }
+
+    func testClaudeSessionStreamsApprovesInterruptsAndFollowsUp() async throws {
+        let server = try ClaudeMockServer(#"""
+        start(effort="high")
+        user(1)
+        send(begin("m"))
+        send(block(0))
+        send(delta(0,"Hel"))
+        time.sleep(.1)
+        send(delta(0,"lo"))
+        send(ask("a","Bash",{"command":"ls"}))
+        r = read()
+        assert r["response"]["response"]["behavior"] == "allow", r
+        send(assistant("m","Hello!"))
+        send(result())
+        user(2)
+        send(ask("b","Write",{"file_path":"/x"}))
+        r = read()
+        assert r["type"] == "control_request" and r["request"] == {"subtype":"interrupt"}, r
+        burst({"type":"control_response","response":{"subtype":"success","request_id":r["request_id"],"response":{}}},
+            cancel("b"), result("error_during_execution"))
+        user(3)
+        send(assistant("m3","Again"))
+        send(result())
+        wait()
+        """#)
+        defer { try? server.remove() }
+        let session = ChatSession()
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
+        XCTAssertEqual(session.phase, .ready)
+        XCTAssertEqual(session.provider, .claudeCode)
+        await session.send("1")
+        try await waitFor { session.messages.last?.text == "Hel" }
+        try await waitFor { session.approvals.count == 1 }
+        XCTAssertEqual(session.messages.map(\.text), ["1", "Hello"])
+        XCTAssertEqual(session.messages.map(\.author), [.user, .claude])
+        let request = session.approvals[0]
+        XCTAssertEqual(request.title, "Run command")
+        await session.answer(request.id, allow: true, reviewed: request)
+        XCTAssertTrue(session.approvals.isEmpty)
+        try await waitFor { session.phase == .ready }
+        XCTAssertEqual(session.messages.map(\.text), ["1", "Hello!"])
+        await session.send("2")
+        try await waitFor { session.approvals.count == 1 }
+        XCTAssertTrue(session.canInterrupt)
+        await session.interrupt()
+        try await waitFor { session.phase == .ready }
+        XCTAssertTrue(session.approvals.isEmpty)
+        XCTAssertNil(session.notice)
+        XCTAssertEqual(session.messages.map(\.text), ["1", "Hello!", "2", "Turn interrupted."])
+        await session.send("3")
+        try await waitFor { session.phase == .ready && session.messages.last?.text == "Again" }
+        await withinDeadline("Close session") { await session.close() }
+        XCTAssertEqual(session.phase, .setup)
+    }
+
+    func testClaudeOutOfTurnApprovalClearsOnCompletion() async throws {
+        let server = try ClaudeMockServer(#"""
+        start(effort="high")
+        time.sleep(.3)
+        send(ask("early","Bash",{"command":"ls"}))
+        user(1)
+        send(result())
+        wait()
+        """#)
+        defer { try? server.remove() }
+        let session = ChatSession()
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
+        try await waitFor { session.approvals.count == 1 }
+        XCTAssertEqual(session.approvals[0].key.turn, "")
+        await session.send("1")
+        try await waitFor { session.phase == .ready && session.approvals.isEmpty }
+        await withinDeadline("Close session") { await session.close() }
+    }
+
+    func testClaudeStartupFailureShowsReason() async throws {
+        let server = try ClaudeMockServer(#"""
+        sys.stderr.write("error: option '--effort <level>' argument 'xhigh' is invalid.\n")
+        sys.exit(1)
+        """#)
+        defer { try? server.remove() }
+        let session = ChatSession()
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
+        XCTAssertEqual(session.phase, .disconnected)
+        XCTAssertEqual(session.notice, "Claude Code exited: error: option '--effort <level>' argument 'xhigh' is invalid.")
+        await withinDeadline("Close session") { await session.close() }
+    }
+
+    func testClaudeExitMidSessionKeepsHistory() async throws {
+        let server = try ClaudeMockServer(#"""
+        start(effort="high")
+        user(1)
+        send(assistant("m","answer"))
+        send(result())
+        user(2)
+        send(ask("a","Bash",{"command":"ls"}))
+        time.sleep(.3)
+        sys.stderr.write("API connection lost\n")
+        sys.exit(1)
+        """#)
+        defer { try? server.remove() }
+        let session = ChatSession()
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
+        await session.send("1")
+        try await waitFor { session.phase == .ready }
+        await session.send("2")
+        try await waitFor { session.phase == .disconnected }
+        XCTAssertEqual(session.messages.map(\.text), ["1", "answer", "2"])
+        XCTAssertEqual(session.notice, "Claude Code exited: API connection lost")
+        XCTAssertTrue(session.approvals.isEmpty)
+        await withinDeadline("Close session") { await session.close() }
+    }
+
+    func testClaudeCloseWhileApprovalPendingReapsChild() async throws {
+        let server = try ClaudeMockServer(#"""
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        start(effort="high")
+        with open("pid.tmp", "w") as marker:
+            marker.write(str(os.getpid()))
+        os.rename("pid.tmp", "pid")
+        user(1)
+        send(ask("a","Bash",{"command":"ls"}))
+        time.sleep(60)
+        """#)
+        defer { try? server.remove() }
+        let session = ChatSession()
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
+        await session.send("1")
+        try await waitFor { session.approvals.count == 1 }
+        let pidFile = server.folder.appendingPathComponent("pid")
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+        await withinDeadline("Close session") { await session.close() }
+        XCTAssertEqual(kill(pid, 0), -1)
+        XCTAssertEqual(errno, ESRCH)
+        XCTAssertEqual(session.phase, .setup)
+    }
+
+    func testClaudeIgnoredProjectSettingsNotice() async throws {
+        let notice = "Project settings in this worktree are not applied, except permission deny and ask rules: .claude/settings.json, .mcp.json."
+        for (settingsFile, expected) in [(#"{"hooks":{}}"#, [notice]), ("{bad", [notice + " Could not read: .claude/settings.json."]), (nil, [])] {
+            let server = try ClaudeMockServer("start(effort=\"high\")\nwait()")
+            defer { try? server.remove() }
+            if let settingsFile {
+                try FileManager.default.createDirectory(at: server.folder.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+                try Data(settingsFile.utf8).write(to: server.folder.appendingPathComponent(".claude/settings.json"))
+                try Data("{}".utf8).write(to: server.folder.appendingPathComponent(".mcp.json"))
+            }
+            let session = ChatSession()
+            await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
+            XCTAssertEqual(session.phase, .ready)
+            XCTAssertEqual(session.messages.map(\.text), expected)
+            XCTAssertTrue(session.messages.allSatisfy { $0.author == .status })
+            await withinDeadline("Close session") { await session.close() }
+        }
+        let codex = try MockServer("start()\ntime.sleep(60)")
+        defer { try? codex.remove() }
+        try FileManager.default.createDirectory(at: codex.folder.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: codex.folder.appendingPathComponent(".claude/settings.json"))
+        let session = ChatSession()
+        await session.start(worktree: codex.folder, settings: settings, executable: codex.executable)
+        XCTAssertEqual(session.phase, .ready)
+        XCTAssertTrue(session.messages.isEmpty)
+        await withinDeadline("Close session") { await session.close() }
+    }
 }
