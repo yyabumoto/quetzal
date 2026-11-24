@@ -19,10 +19,15 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         ForEach(session.messages) { message in
-                            VStack(alignment: .leading, spacing: 4) {
+                            let isUser = message.author == .user
+                            VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
                                 Text(message.author.rawValue).font(.caption.bold()).foregroundStyle(.secondary)
-                                Text(verbatim: message.text).textSelection(.enabled)
+                                Text(verbatim: message.text)
+                                    .multilineTextAlignment(isUser ? .trailing : .leading)
+                                    .textSelection(.enabled)
                             }
+                            .padding(.leading, isUser ? 32 : 0)
+                            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
                         }
                         ForEach(session.approvals) { request in
                             approvalCard(request)
