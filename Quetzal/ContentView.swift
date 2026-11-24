@@ -2,18 +2,12 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var session = ChatSession()
-    @State private var executableError: String?
 
     var body: some View {
         Group {
             switch session.phase {
             case .setup:
-                VStack {
-                    StartView(start: start)
-                    if let executableError {
-                        Text(executableError).foregroundStyle(.red).padding(.horizontal)
-                    }
-                }
+                StartView(start: session.start)
             case .connecting:
                 VStack(spacing: 12) {
                     ProgressView("Starting Codex…")
@@ -26,78 +20,75 @@ struct ContentView: View {
         .frame(minWidth: 520, minHeight: 380)
         .onDisappear { Task { await session.close() } }
     }
+}
 
-    private func start(_ worktree: URL, _ settings: ModelSettings) {
-        executableError = nil
+struct StartView: View {
+    let start: (URL, ModelSettings, URL) async -> Void
+    @State private var provider = Provider.codex
+    @State private var worktreeStart = WorktreeSessionStart()
+    @State private var codexDraft = SessionSettingsDraft()
+    @State private var claudeDraft = SessionSettingsDraft()
+
+    var body: some View {
+        @Bindable var state = worktreeStart
+        Form {
+            Picker("Provider", selection: $provider) {
+                ForEach(Provider.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .disabled(state.isStarting)
+            WorktreePicker(selection: $state.selection, isSelectionLocked: state.isStarting,
+                           onRepositoryOpened: state.repositoryOpened)
+            if let error = state.error { Text(error).foregroundStyle(.red) }
+            SessionOptions(provider: provider, canStart: state.selection != nil && !state.isStarting,
+                           draft: provider == .codex ? $codexDraft : $claudeDraft, start: startSession)
+                .id(provider)
+        }
+        .formStyle(.grouped)
+        .onChange(of: state.selection?.id) { state.selectionChanged() }
+        .onDisappear(perform: state.invalidate)
+    }
+
+    private func startSession(_ settings: ModelSettings) {
+        guard let id = worktreeStart.begin() else { return }
         var executable = CodexClient.findExecutable()
         if executable == nil {
             let panel = NSOpenPanel()
             panel.message = "Choose the Codex CLI executable to start this session."
             panel.prompt = "Use Codex"
             panel.canChooseDirectories = false
-            guard panel.runModal() == .OK, let chosen = panel.url else { return }
+            guard panel.runModal() == .OK, let chosen = panel.url else {
+                worktreeStart.finish(id)
+                return
+            }
             guard CodexClient.isExecutable(chosen) else {
-                executableError = "Choose a file with execute permission."
+                worktreeStart.finish(id, error: "Choose a file with execute permission.")
                 return
             }
             executable = chosen
         }
-        if let executable {
-            Task { await session.start(worktree: worktree, settings: settings, executable: executable) }
+        guard let executable else {
+            worktreeStart.finish(id)
+            return
         }
-    }
-}
-
-struct StartView: View {
-    let start: (URL, ModelSettings) -> Void
-    @State private var provider = Provider.codex
-    @State private var root: URL?
-    @State private var error: String?
-    @State private var codexDraft = SessionSettingsDraft()
-    @State private var claudeDraft = SessionSettingsDraft()
-
-    var body: some View {
-        Form {
-            Picker("Provider", selection: $provider) {
-                ForEach(Provider.allCases) { Text($0.rawValue).tag($0) }
-            }
-            LabeledContent("Worktree") {
-                if let root { Text(root.path).textSelection(.enabled) }
-                Button("Choose Folder…", action: chooseFolder)
-            }
-            if let error { Text(error).foregroundStyle(.red) }
-            SessionOptions(provider: provider, root: root, draft: provider == .codex ? $codexDraft : $claudeDraft, start: start)
-                .id(provider)
-        }
-        .formStyle(.grouped)
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        guard panel.runModal() == .OK, let folder = panel.url else { return }
-        do {
-            root = try Worktree.root(at: folder)
-            error = nil
-        } catch {
-            root = nil
-            self.error = error.localizedDescription
-        }
+        worktreeStart.validateAndStart(id, validate: { selected in
+            try await GitWorktreeCatalog().validate(selected.worktree, in: selected.repository)
+        }, launch: { directory in
+            await start(directory, settings, executable)
+        })
     }
 }
 
 private struct SessionOptions: View {
     let provider: Provider
-    let root: URL?
+    let canStart: Bool
     @Binding var draft: SessionSettingsDraft
-    let start: (URL, ModelSettings) -> Void
+    let start: (ModelSettings) -> Void
     @AppStorage private var defaultModel: String
     @AppStorage private var defaultEffort: String
 
-    init(provider: Provider, root: URL?, draft: Binding<SessionSettingsDraft>, start: @escaping (URL, ModelSettings) -> Void) {
+    init(provider: Provider, canStart: Bool, draft: Binding<SessionSettingsDraft>, start: @escaping (ModelSettings) -> Void) {
         self.provider = provider
-        self.root = root
+        self.canStart = canStart
         _draft = draft
         self.start = start
         _defaultModel = AppStorage(wrappedValue: "", provider.key("model"))
@@ -111,9 +102,9 @@ private struct SessionOptions: View {
         TextField("Effort", text: effort, prompt: Text("CLI default"))
         if provider == .claudeCode { Text("Claude Code sessions are unavailable.") }
         Button("Start Session") {
-            if let root { start(root, draft.settings(defaultModel: defaultModel, defaultEffort: defaultEffort)) }
+            start(draft.settings(defaultModel: defaultModel, defaultEffort: defaultEffort))
         }
-        .disabled(root == nil || provider != .codex)
+        .disabled(!canStart || provider != .codex)
         .keyboardShortcut(.defaultAction)
     }
 }

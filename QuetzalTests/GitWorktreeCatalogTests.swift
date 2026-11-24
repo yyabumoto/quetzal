@@ -136,6 +136,32 @@ final class GitWorktreeCatalogTests: XCTestCase {
         XCTAssertEqual(destination, canonical(linked))
     }
 
+    @MainActor
+    func testSelectedWorktreeStartsCodexInItsOwnDirectory() async throws {
+        let root = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let main = root.appendingPathComponent("main", isDirectory: true)
+        let linked = root.appendingPathComponent("selected worktree", isDirectory: true)
+        try initialize(main, under: root)
+        try git(["worktree", "add", "--detach", linked.path], in: main)
+        let repository = try await catalog.list(in: main)
+        let row = try XCTUnwrap(repository.entries.first { canonical($0.directory) == canonical(linked) })
+        let selected = WorktreeSelection(worktree: row, repository: repository)
+        let destination = try await catalog.validate(selected.worktree, in: selected.repository)
+        let server = try MockServer("""
+        assert os.path.basename(os.getcwd()) == "selected worktree"
+        start()
+        time.sleep(12)
+        """)
+        defer { try? server.remove() }
+
+        let session = ChatSession()
+        await session.start(worktree: destination, settings: ModelSettings(model: nil, effort: nil), executable: server.executable)
+        XCTAssertEqual(session.phase, .ready)
+        XCTAssertEqual(session.worktree, canonical(linked))
+        await session.close()
+    }
+
     private func canonical(_ url: URL) -> URL {
         url.resolvingSymlinksInPath().standardizedFileURL
     }
