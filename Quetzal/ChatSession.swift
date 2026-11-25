@@ -21,6 +21,8 @@ final class ChatSession {
     private(set) var approvals: [ApprovalRequest] = []
     private(set) var answering: Set<RequestID> = []
     private(set) var notice: String?
+    /// 最初のメッセージから決めたセッション名。決まるまでは nil。
+    private(set) var title: String?
     var draft = ""
 
     @ObservationIgnored private var generation = UUID()
@@ -33,6 +35,14 @@ final class ChatSession {
     @ObservationIgnored private var completed: Set<String> = []
     @ObservationIgnored private var messageIndices: [ItemKey: Int] = [:]
     @ObservationIgnored private var lastErrors: [String: String] = [:]
+    @ObservationIgnored private let namer: WorkNamer
+    @ObservationIgnored private var executable: URL?
+    @ObservationIgnored private var naming: Task<Void, Never>?
+    @ObservationIgnored private var namingID: UUID?
+
+    init(namer: WorkNamer) {
+        self.namer = namer
+    }
 
     var canSend: Bool { phase == .ready && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var canInterrupt: Bool { phase == .running && turnID != nil }
@@ -43,6 +53,7 @@ final class ChatSession {
         self.provider = provider
         self.settings = settings
         self.worktree = worktree
+        self.executable = executable
         let project = provider == .claudeCode ? ClaudeCodeProject.load(in: worktree) : nil
         let connection: any AgentClient = if let project {
             ClaudeCodeClient(executable: executable, project: project)
@@ -88,6 +99,7 @@ final class ChatSession {
         draft = ""
         let message = Message(author: .user, text: text)
         messages.append(message)
+        let namingRound = beginNaming(text)
         phase = .sending
         do {
             let id = try await client.startTurn(threadID: threadID, text: text, effort: settings.effort)
@@ -96,6 +108,7 @@ final class ChatSession {
         } catch {
             guard generation == token, submission == request else { return }
             if turnID == nil {
+                if let namingRound, namingID == namingRound { cancelNaming() }
                 messages.removeAll { $0.id == message.id }
                 draft = text
                 if phase != .disconnected { phase = .ready }
@@ -139,6 +152,9 @@ final class ChatSession {
 
     func close() async {
         generation = UUID()
+        cancelNaming()
+        title = nil
+        executable = nil
         subscription?.cancel()
         subscription = nil
         let connection = client
@@ -157,6 +173,29 @@ final class ChatSession {
         notice = nil
         draft = ""
         await connection?.close()
+    }
+
+    /// 未命名のときだけ、メッセージから名前を決め始め、その回の ID を返す。
+    private func beginNaming(_ text: String) -> UUID? {
+        guard title == nil, naming == nil, let executable else { return nil }
+        let id = UUID()
+        let token = generation
+        let namer = namer, provider = provider
+        namingID = id
+        naming = Task { [weak self] in
+            guard let names = try? await namer.names(for: text, provider: provider, executable: executable),
+                  let self, generation == token, namingID == id else { return }
+            title = names.session
+            naming = nil
+            namingID = nil
+        }
+        return id
+    }
+
+    private func cancelNaming() {
+        naming?.cancel()
+        naming = nil
+        namingID = nil
     }
 
     private func began(_ turn: String) {

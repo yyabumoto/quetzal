@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var session = ChatSession()
+    @State private var session = ChatSession(namer: .live)
     @State private var worktreeStart = WorktreeSessionStart()
     @State private var sidebar = WorktreeSidebarModel()
 

@@ -35,7 +35,7 @@ final class ChatSessionTests: XCTestCase {
         time.sleep(60)
         """#)
         defer { try? server.remove() }
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: server.folder, settings: settings, executable: server.executable)
         XCTAssertEqual(session.phase, .ready)
         await session.send(" \n")
@@ -70,7 +70,7 @@ final class ChatSessionTests: XCTestCase {
         time.sleep(60)
         """#)
         defer { try? server.remove() }
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: server.folder, settings: settings, executable: server.executable)
         let send = Task { await session.send("1") }
         try await waitFor { session.approvals.count == 1 }
@@ -102,7 +102,7 @@ final class ChatSessionTests: XCTestCase {
             try? firstServer.remove()
             try? secondServer.remove()
         }
-        let first = ChatSession(), second = ChatSession()
+        let first = ChatSession(namer: .fallbackOnly), second = ChatSession(namer: .fallbackOnly)
         await first.start(worktree: firstServer.folder, settings: settings, executable: firstServer.executable)
         await second.start(worktree: secondServer.folder, settings: settings, executable: secondServer.executable)
         await first.send("1")
@@ -126,7 +126,7 @@ final class ChatSessionTests: XCTestCase {
         """)
         let next = try MockServer("start()\ntime.sleep(60)")
         defer { try? server.remove(); try? next.remove() }
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         let starting = Task { await session.start(worktree: server.folder, settings: settings, executable: server.executable) }
         let pidFile = server.folder.appendingPathComponent("pid")
         try await waitFor { FileManager.default.fileExists(atPath: pidFile.path) }
@@ -167,7 +167,7 @@ final class ChatSessionTests: XCTestCase {
         wait()
         """#)
         defer { try? server.remove() }
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
         XCTAssertEqual(session.phase, .ready)
         XCTAssertEqual(session.provider, .claudeCode)
@@ -206,7 +206,7 @@ final class ChatSessionTests: XCTestCase {
         wait()
         """#)
         defer { try? server.remove() }
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
         try await waitFor { session.approvals.count == 1 }
         XCTAssertEqual(session.approvals[0].key.turn, "")
@@ -221,7 +221,7 @@ final class ChatSessionTests: XCTestCase {
         sys.exit(1)
         """#)
         defer { try? server.remove() }
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
         XCTAssertEqual(session.phase, .disconnected)
         XCTAssertEqual(session.notice, "Claude Code exited: error: option '--effort <level>' argument 'xhigh' is invalid.")
@@ -241,7 +241,7 @@ final class ChatSessionTests: XCTestCase {
         sys.exit(1)
         """#)
         defer { try? server.remove() }
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
         await session.send("1")
         try await waitFor { session.phase == .ready }
@@ -265,7 +265,7 @@ final class ChatSessionTests: XCTestCase {
         time.sleep(60)
         """#)
         defer { try? server.remove() }
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
         await session.send("1")
         try await waitFor { session.approvals.count == 1 }
@@ -287,7 +287,7 @@ final class ChatSessionTests: XCTestCase {
                 try Data(settingsFile.utf8).write(to: server.folder.appendingPathComponent(".claude/settings.json"))
                 try Data("{}".utf8).write(to: server.folder.appendingPathComponent(".mcp.json"))
             }
-            let session = ChatSession()
+            let session = ChatSession(namer: .fallbackOnly)
             await session.start(worktree: server.folder, settings: settings, executable: server.executable, provider: .claudeCode)
             XCTAssertEqual(session.phase, .ready)
             XCTAssertEqual(session.messages.map(\.text), expected)
@@ -298,10 +298,190 @@ final class ChatSessionTests: XCTestCase {
         defer { try? codex.remove() }
         try FileManager.default.createDirectory(at: codex.folder.appendingPathComponent(".claude"), withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: codex.folder.appendingPathComponent(".claude/settings.json"))
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: codex.folder, settings: settings, executable: codex.executable)
         XCTAssertEqual(session.phase, .ready)
         XCTAssertTrue(session.messages.isEmpty)
+        await withinDeadline("Close session") { await session.close() }
+    }
+}
+
+/// 名前の案を、テストが resolve で返すまで止めておく。
+private final class NamingProbe: @unchecked Sendable {
+    private struct Call {
+        let message: String
+        var cancelled = false
+        var continuation: CheckedContinuation<NameProposal, Error>?
+        var result: Result<NameProposal, Error>?
+    }
+
+    private let lock = NSLock()
+    private var calls: [Call] = []
+
+    var namer: WorkNamer {
+        WorkNamer(timeout: .seconds(30), model: { _ in nil }, propose: { [self] in try await propose($0) })
+    }
+
+    var messages: [String] { lock.withLock { calls.map(\.message) } }
+
+    func isCancelled(_ index: Int) -> Bool { lock.withLock { calls[index].cancelled } }
+
+    func resolve(_ index: Int, title: String) {
+        let continuation = lock.withLock {
+            calls[index].result = .success(NameProposal(type: "fix", slug: "named", title: title))
+            defer { calls[index].continuation = nil }
+            return calls[index].continuation
+        }
+        continuation?.resume(returning: NameProposal(type: "fix", slug: "named", title: title))
+    }
+
+    private func propose(_ request: NamingRequest) async throws -> NameProposal {
+        let start = try XCTUnwrap(request.prompt.range(of: "<request>\n")?.upperBound)
+        let end = try XCTUnwrap(request.prompt.range(of: "\n</request>", options: .backwards)?.lowerBound)
+        let index = lock.withLock {
+            calls.append(Call(message: String(request.prompt[start..<end])))
+            return calls.count - 1
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let result: Result<NameProposal, Error>? = lock.withLock {
+                    if calls[index].result == nil { calls[index].continuation = continuation }
+                    return calls[index].result
+                }
+                if let result { continuation.resume(with: result) }
+            }
+        } onCancel: {
+            lock.withLock { calls[index].cancelled = true }
+        }
+    }
+}
+
+extension ChatSessionTests {
+    private static let turnErrorThenSuccess = #"""
+    start()
+    req = read()
+    assert req["method"] == "turn/start"
+    send({"id":req["id"],"error":{"code":-1,"message":"Busy"}})
+    req = read()
+    assert req["method"] == "turn/start"
+    response(req,{"turn":{"id":"1"}})
+    completed(1)
+    time.sleep(60)
+    """#
+
+    func testFirstMessageNamesSessionOnce() async throws {
+        let server = try MockServer(#"""
+        start()
+        req = turn(1)
+        response(req,{"turn":{"id":"1"}})
+        completed(1)
+        req = turn(2)
+        response(req,{"turn":{"id":"2"}})
+        completed(2)
+        time.sleep(60)
+        """#)
+        defer { try? server.remove() }
+        let probe = NamingProbe()
+        let session = ChatSession(namer: probe.namer)
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable)
+        XCTAssertNil(session.title)
+        await session.send("1")
+        try await waitFor { probe.messages.count == 1 }
+        XCTAssertEqual(probe.messages, ["1"])
+        XCTAssertNil(session.title)
+        probe.resolve(0, title: "Login fix")
+        try await waitFor { session.title == "Login fix" }
+        await session.send("2")
+        try await waitFor { session.phase == .ready }
+        XCTAssertEqual(probe.messages, ["1"])
+        XCTAssertEqual(session.title, "Login fix")
+        await withinDeadline("Close session") { await session.close() }
+        XCTAssertNil(session.title)
+    }
+
+    func testFailedNamingUsesFirstLine() async throws {
+        let server = try MockServer("start()\nreq = turn(1)\nresponse(req,{\"turn\":{\"id\":\"1\"}})\ncompleted(1)\ntime.sleep(60)")
+        defer { try? server.remove() }
+        let session = ChatSession(namer: .fallbackOnly)
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable)
+        await session.send("1")
+        try await waitFor { session.title == "1" }
+        await withinDeadline("Close session") { await session.close() }
+    }
+
+    func testCloseBeforeNamingDiscardsName() async throws {
+        let server = try MockServer("start()\nreq = turn(1)\nresponse(req,{\"turn\":{\"id\":\"1\"}})\ntime.sleep(60)")
+        defer { try? server.remove() }
+        let probe = NamingProbe()
+        let session = ChatSession(namer: probe.namer)
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable)
+        await session.send("1")
+        try await waitFor { probe.messages.count == 1 }
+        await withinDeadline("Close session") { await session.close() }
+        XCTAssertTrue(probe.isCancelled(0))
+        probe.resolve(0, title: "Late")
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(session.title)
+    }
+
+    func testTurnStartErrorDiscardsNamingAndRetriesWithResentMessage() async throws {
+        let server = try MockServer(Self.turnErrorThenSuccess)
+        defer { try? server.remove() }
+        let probe = NamingProbe()
+        let session = ChatSession(namer: probe.namer)
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable)
+        await session.send("first")
+        XCTAssertEqual(session.draft, "first")
+        XCTAssertEqual(session.notice, "Busy")
+        XCTAssertEqual(probe.messages, ["first"])
+        XCTAssertTrue(probe.isCancelled(0))
+        probe.resolve(0, title: "Old")
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(session.title)
+        await session.send("second")
+        try await waitFor { probe.messages.count == 2 }
+        XCTAssertEqual(probe.messages, ["first", "second"])
+        probe.resolve(1, title: "Second")
+        try await waitFor { session.title == "Second" }
+        await withinDeadline("Close session") { await session.close() }
+    }
+
+    func testOldNamingFinishingDoesNotDetachNewRound() async throws {
+        let server = try MockServer(Self.turnErrorThenSuccess)
+        defer { try? server.remove() }
+        let probe = NamingProbe()
+        let session = ChatSession(namer: probe.namer)
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable)
+        await session.send("first")
+        await session.send("second")
+        try await waitFor { probe.messages.count == 2 }
+        probe.resolve(0, title: "Old")
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(session.title)
+        XCTAssertFalse(probe.isCancelled(1))
+        await withinDeadline("Close session") { await session.close() }
+        XCTAssertTrue(probe.isCancelled(1))
+        probe.resolve(1, title: "New")
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(session.title)
+    }
+
+    func testNamingFinishesAfterDisconnect() async throws {
+        let server = try MockServer(#"""
+        start()
+        req = turn(1)
+        response(req,{"turn":{"id":"1"}})
+        print("bad json", flush=True)
+        """#)
+        defer { try? server.remove() }
+        let probe = NamingProbe()
+        let session = ChatSession(namer: probe.namer)
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable)
+        await session.send("1")
+        try await waitFor { session.phase == .disconnected }
+        try await waitFor { probe.messages.count == 1 }
+        probe.resolve(0, title: "Named")
+        try await waitFor { session.title == "Named" }
         await withinDeadline("Close session") { await session.close() }
     }
 }

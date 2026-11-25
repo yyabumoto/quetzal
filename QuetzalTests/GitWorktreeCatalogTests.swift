@@ -155,7 +155,7 @@ final class GitWorktreeCatalogTests: XCTestCase {
         """)
         defer { try? server.remove() }
 
-        let session = ChatSession()
+        let session = ChatSession(namer: .fallbackOnly)
         await session.start(worktree: destination, settings: ModelSettings(model: nil, effort: nil), executable: server.executable)
         XCTAssertEqual(session.phase, .ready)
         XCTAssertEqual(session.worktree, canonical(linked))
