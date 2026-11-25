@@ -108,7 +108,10 @@ final class ChatSession {
         } catch {
             guard generation == token, submission == request else { return }
             if turnID == nil {
-                if let namingRound, namingID == namingRound { cancelNaming() }
+                if let namingRound {
+                    if namingID == namingRound { cancelNaming() }
+                    title = nil
+                }
                 messages.removeAll { $0.id == message.id }
                 draft = text
                 if phase != .disconnected { phase = .ready }

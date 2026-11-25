@@ -446,6 +446,32 @@ extension ChatSessionTests {
         await withinDeadline("Close session") { await session.close() }
     }
 
+    func testNamingFinishedBeforeTurnStartErrorIsDiscarded() async throws {
+        let server = try MockServer(#"""
+        start()
+        req = read()
+        assert req["method"] == "turn/start"
+        time.sleep(.5)
+        send({"id":req["id"],"error":{"code":-1,"message":"Busy"}})
+        req = read()
+        assert req["method"] == "turn/start"
+        response(req,{"turn":{"id":"1"}})
+        completed(1)
+        time.sleep(60)
+        """#)
+        defer { try? server.remove() }
+        let session = ChatSession(namer: .fallbackOnly)
+        await session.start(worktree: server.folder, settings: settings, executable: server.executable)
+        let sending = Task { await session.send("first") }
+        try await waitFor { session.title == "first" }
+        await sending.value
+        XCTAssertEqual(session.draft, "first")
+        XCTAssertNil(session.title)
+        await session.send("second")
+        try await waitFor { session.title == "second" }
+        await withinDeadline("Close session") { await session.close() }
+    }
+
     func testOldNamingFinishingDoesNotDetachNewRound() async throws {
         let server = try MockServer(Self.turnErrorThenSuccess)
         defer { try? server.remove() }
