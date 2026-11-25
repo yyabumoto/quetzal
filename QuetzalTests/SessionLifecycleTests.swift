@@ -46,40 +46,37 @@ final class SessionLifecycleTests: XCTestCase {
         }
     }
 
-    func testMenusKeepNormalizedSavedAndCurrentModelsAndShowWhenDefaultCanBeChosen() {
+    func testModelMenuKeepsNormalizedValuesWithoutAnEmptyOption() {
         let current = ModelSettings(model: " current-model ", effort: nil)
         let saved = ModelSettings(model: " saved-model ", effort: nil)
-        XCTAssertEqual(Provider.claudeCode.modelOptions(current: current, saved: saved, canUseDefault: true),
-                       ["", "opus", "sonnet", "haiku", "saved-model", "current-model"])
-        XCTAssertEqual(Provider.claudeCode.modelOptions(current: current, saved: saved, canUseDefault: false),
+        XCTAssertEqual(Provider.claudeCode.modelOptions(current: current, saved: saved),
                        ["opus", "sonnet", "haiku", "saved-model", "current-model"])
         XCTAssertEqual(Provider.claudeCode.modelOptions(current: ModelSettings(model: "", effort: nil),
-                                                        saved: ModelSettings(model: " sonnet ", effort: nil),
-                                                        canUseDefault: false),
-                       ["", "opus", "sonnet", "haiku"])
+                                                        saved: ModelSettings(model: " sonnet ", effort: nil)),
+                       ["opus", "sonnet", "haiku"])
     }
 
     func testEffortMenusUseSelectedModelAndKeepExistingValues() {
         let savedMax = ModelSettings(model: nil, effort: " max ")
         let savedCustom = ModelSettings(model: nil, effort: "custom")
         let legacy = ModelSettings(model: "gpt-5.5", effort: "ultra")
-        XCTAssertEqual(Provider.codex.effortOptions(current: legacy, saved: savedMax, canUseDefault: false),
+        XCTAssertEqual(Provider.codex.effortOptions(current: legacy, saved: savedMax, isSessionSetup: false),
                        ["low", "medium", "high", "xhigh", "ultra"])
         XCTAssertEqual(Provider.codex.effortOptions(current: ModelSettings(model: "gpt-6-luna", effort: nil),
-                                                    saved: savedMax, canUseDefault: true),
-                       ["", "low", "medium", "high", "xhigh", "max"])
+                                                    saved: savedMax, isSessionSetup: true),
+                       ["low", "medium", "high", "xhigh", "max"])
         XCTAssertEqual(Provider.codex.effortOptions(current: ModelSettings(model: "custom-model", effort: nil),
-                                                    saved: savedCustom, canUseDefault: true),
-                       ["", "low", "medium", "high", "xhigh", "custom"])
+                                                    saved: savedCustom, isSessionSetup: true),
+                       ["low", "medium", "high", "xhigh", "custom"])
 
         let uppercase = ModelSettings(model: nil, effort: "HIGH")
         let low = ModelSettings(model: nil, effort: "low")
-        XCTAssertEqual(Provider.claudeCode.effortOptions(current: low, saved: uppercase, canUseDefault: false),
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: low, saved: uppercase, isSessionSetup: false),
                        ClaudeCodeEffort.levels)
-        XCTAssertEqual(Provider.claudeCode.effortOptions(current: uppercase, saved: uppercase, canUseDefault: false),
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: uppercase, saved: uppercase, isSessionSetup: false),
                        ClaudeCodeEffort.levels + ["HIGH"])
-        XCTAssertEqual(Provider.claudeCode.effortOptions(current: low, saved: uppercase, canUseDefault: true),
-                       [""] + ClaudeCodeEffort.levels + ["HIGH"])
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: low, saved: uppercase, isSessionSetup: true),
+                       ClaudeCodeEffort.levels + ["HIGH"])
     }
 
     func testModelSelectionAdjustsOnlyAnUnsupportedKnownCodexEffort() {
@@ -115,7 +112,8 @@ final class SessionLifecycleTests: XCTestCase {
             ("custom", nil, #"{"model":"custom","config":{"model_reasoning_effort":"high"}}"#, #"{"model":"custom","effort":"high"}"#),
             (nil, "low", #"{"model":"updated","config":{"model_reasoning_effort":"low"}}"#, #"{"model":"updated","effort":"low"}"#),
             ("", nil, #"{"config":{"model_reasoning_effort":"high"}}"#, #"{"effort":"high"}"#),
-            (nil, "", #"{"model":"updated"}"#, #"{"model":"updated"}"#)
+            (nil, "", #"{"model":"updated"}"#, #"{"model":"updated"}"#),
+            ("", "", "{}", "{}")
         ]
         for (model, effort, threadOptions, turnOptions) in cases {
             draft.model = model
@@ -149,7 +147,8 @@ final class SessionLifecycleTests: XCTestCase {
             ("custom", nil, #""custom""#, #""high""#),
             (nil, "low", #""updated""#, #""low""#),
             ("", nil, "None", #""high""#),
-            (nil, "", #""updated""#, "None")
+            (nil, "", #""updated""#, "None"),
+            ("", "", "None", "None")
         ]
         for (model, effort, expectedModel, expectedEffort) in cases {
             draft.model = model

@@ -131,8 +131,6 @@ struct SessionStatusLine: View {
     @Binding var settings: ModelSettings
     let saved: ModelSettings
 
-    private var canUseDefault: Bool { providerSelection != nil }
-
     var body: some View {
         HStack(spacing: 12) {
             if let providerSelection {
@@ -145,36 +143,43 @@ struct SessionStatusLine: View {
                 Text(provider.rawValue).foregroundStyle(.secondary)
             }
 
-            settingPicker("Model",
-                          options: provider.modelOptions(current: settings, saved: saved, canUseDefault: canUseDefault),
-                          selection: Binding(get: { settings.model ?? "" }, set: { model in
+            settingMenu("Model", selection: settings.model,
+                        options: provider.modelOptions(current: settings, saved: saved)) { model in
                 settings = provider.selectingModel(model, in: settings)
-            }))
-            settingPicker("Effort",
-                          options: provider.effortOptions(current: settings, saved: saved, canUseDefault: canUseDefault),
-                          selection: Binding(get: { settings.effort ?? "" }, set: { effort in
+            }
+            settingMenu("Effort", selection: settings.effort,
+                        options: provider.effortOptions(current: settings, saved: saved, isSessionSetup: providerSelection != nil)) { effort in
                 settings = ModelSettings(model: settings.model, effort: effort)
-            }))
+            }
             Spacer(minLength: 0)
         }
         .controlSize(.small)
     }
 
-    private func settingPicker(_ title: LocalizedStringKey, options: [String], selection: Binding<String>) -> some View {
-        HStack(spacing: 4) {
-            Text(title).foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            Picker(title, selection: selection) {
-                ForEach(options, id: \.self) { option in
-                    if option.isEmpty {
-                        Text("CLI default").tag(option)
+    private func settingMenu(_ title: LocalizedStringKey, selection: String?,
+                             options: [String], select: @escaping (String) -> Void) -> some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    select(option)
+                } label: {
+                    if option == selection {
+                        Label {
+                            Text(verbatim: option)
+                        } icon: {
+                            Image(systemName: "checkmark")
+                        }
                     } else {
-                        Text(verbatim: option).tag(option)
+                        Text(verbatim: option)
                     }
                 }
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                if let selection { Text(verbatim: selection) }
+            }
+            .lineLimit(1)
         }
     }
 }

@@ -32,12 +32,12 @@ extension Provider {
         CodexModel(id: "gpt-5.5", efforts: commonCodexEfforts, defaultEffort: "medium")
     ]
 
-    func modelOptions(current: ModelSettings, saved: ModelSettings, canUseDefault: Bool) -> [String] {
+    func modelOptions(current: ModelSettings, saved: ModelSettings) -> [String] {
         let options = self == .codex ? Self.codexModels.map(\.id) : ["opus", "sonnet", "haiku"]
-        return Self.menuOptions(options, saved: saved.model, current: current.model, canUseDefault: canUseDefault)
+        return Self.menuOptions(options, saved: saved.model, current: current.model)
     }
 
-    func effortOptions(current: ModelSettings, saved: ModelSettings, canUseDefault: Bool) -> [String] {
+    func effortOptions(current: ModelSettings, saved: ModelSettings, isSessionSetup: Bool) -> [String] {
         let options: [String]
         var savedEffort = saved.effort
         switch self {
@@ -50,11 +50,11 @@ extension Provider {
             }
         case .claudeCode:
             options = ClaudeCodeEffort.levels
-            if !canUseDefault, let effort = savedEffort, !options.contains(effort) {
+            if !isSessionSetup, let effort = savedEffort, !options.contains(effort) {
                 savedEffort = nil
             }
         }
-        return Self.menuOptions(options, saved: savedEffort, current: current.effort, canUseDefault: canUseDefault)
+        return Self.menuOptions(options, saved: savedEffort, current: current.effort)
     }
 
     func selectingModel(_ id: String, in current: ModelSettings) -> ModelSettings {
@@ -67,11 +67,10 @@ extension Provider {
         return updated
     }
 
-    private static func menuOptions(_ options: [String], saved: String?, current: String?, canUseDefault: Bool) -> [String] {
+    private static func menuOptions(_ options: [String], saved: String?, current: String?) -> [String] {
         var seen = Set<String>()
         let values = options + [saved, current].compactMap { $0 }
-        let distinct = values.filter { seen.insert($0).inserted }
-        return canUseDefault || current == nil ? [""] + distinct : distinct
+        return values.filter { seen.insert($0).inserted }
     }
 }
 

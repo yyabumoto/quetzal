@@ -173,7 +173,7 @@ actor ClaudeCodeClient: AgentClient {
 
     private func applyTurnSettings(_ proposed: ModelSettings) async throws {
         if (proposed.model == nil && settings.model != nil) || (proposed.effort == nil && settings.effort != nil) {
-            throw ClaudeCodeFailure("Choose a model or effort for this session, or start a new session to use the CLI default.")
+            throw ClaudeCodeFailure("Choose a replacement model or effort for this session.")
         }
         if let effort = proposed.effort, effort != settings.effort, !ClaudeCodeEffort.levels.contains(effort) {
             throw ClaudeCodeFailure("Choose a supported Claude Code effort.")
@@ -211,7 +211,12 @@ actor ClaudeCodeClient: AgentClient {
     }
 
     private func effortMismatch(_ selected: String, actual: String?) -> ClaudeCodeFailure {
-        ClaudeCodeFailure("Claude Code reported effort \(actual ?? "CLI default") for the selected value \(selected). Check CLAUDE_CODE_EFFORT_LEVEL and the CLI effort limit.")
+        let report = if let actual {
+            "Claude Code reported effort \(actual) for the selected value \(selected)."
+        } else {
+            "Claude Code did not report an effective effort for the selected value \(selected)."
+        }
+        return ClaudeCodeFailure("\(report) Check CLAUDE_CODE_EFFORT_LEVEL and the selected model's effort support.")
     }
 
     private func settingsControl(_ subtype: String, _ parameters: [String: JSON] = [:]) async throws -> JSON {
