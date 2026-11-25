@@ -171,3 +171,59 @@ nonisolated enum NameFormat {
     /// 構造化出力の JSON Schema。Claude Code の --json-schema と Codex の --output-schema に同じものを渡す。
     static let schema = #"{"type":"object","properties":{"type":{"type":"string","enum":["feat","fix","hotfix","release","chore"]},"slug":{"type":"string"},"title":{"type":"string"}},"required":["type","slug","title"],"additionalProperties":false}"#
 }
+
+nonisolated struct NamingRequest: Equatable, Sendable {
+    let prompt: String
+    let provider: Provider
+    let executable: URL
+    /// nil なら CLI の既定のモデル。
+    let model: String?
+}
+
+nonisolated struct WorkNamer: Sendable {
+    private let timeout: Duration
+    private let model: @Sendable (Provider) -> String?
+    private let now: @Sendable () -> Date
+    private let propose: @Sendable (NamingRequest) async throws -> NameProposal
+
+    init(
+        timeout: Duration = .seconds(15),
+        model: @escaping @Sendable (Provider) -> String? = { _ in nil },
+        now: @escaping @Sendable () -> Date = { Date() },
+        propose: @escaping @Sendable (NamingRequest) async throws -> NameProposal
+    ) {
+        self.timeout = timeout
+        self.model = model
+        self.now = now
+        self.propose = propose
+    }
+
+    /// 実際の CLI を呼ぶ。
+    static let live = WorkNamer(propose: { try await NameGenerator().propose($0) })
+    /// CLI を呼ばず、いつも代わりの名前を返す。テスト用。
+    static let fallbackOnly = WorkNamer(propose: { _ in throw NamingFailure.launch })
+
+    /// 最初のメッセージから名前を決める。CLI の失敗とタイムアウトでは代わりの名前を返す。
+    /// 呼び出し元のタスクが取り消されたときだけ CancellationError を投げる。重複の回避はしない（uniqued を使う）。
+    func names(for message: String, provider: Provider, executable: URL) async throws(CancellationError) -> WorkNames {
+        let request = NamingRequest(prompt: NameFormat.prompt(for: message), provider: provider,
+                                    executable: executable, model: model(provider))
+        let proposal: NameProposal?
+        do {
+            proposal = try await withThrowingTaskGroup(of: NameProposal.self) { [propose, timeout] group in
+                group.addTask { try await propose(request) }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw NamingFailure.timedOut
+                }
+                defer { group.cancelAll() }
+                return try await group.next()
+            }
+        } catch {
+            proposal = nil
+        }
+        if Task.isCancelled { throw CancellationError() }
+        if let proposal { return NameFormat.names(from: proposal, message: message, date: now()) }
+        return NameFormat.fallback(message: message, date: now())
+    }
+}
