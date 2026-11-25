@@ -6,6 +6,7 @@ struct SettingsView: View {
             ForEach(Provider.allCases) { provider in
                 ProviderSettings(provider: provider)
             }
+            NamingSettingsSection()
         }
         .formStyle(.grouped)
         .frame(width: 440)

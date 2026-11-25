@@ -188,7 +188,7 @@ nonisolated struct WorkNamer: Sendable {
 
     init(
         timeout: Duration = .seconds(15),
-        model: @escaping @Sendable (Provider) -> String? = { _ in nil },
+        model: @escaping @Sendable (Provider) -> String? = { NamingSettings.model(for: $0) },
         now: @escaping @Sendable () -> Date = { Date() },
         propose: @escaping @Sendable (NamingRequest) async throws -> NameProposal
     ) {
