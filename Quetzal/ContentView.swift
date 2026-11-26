@@ -16,7 +16,7 @@ struct ContentView: View {
             Group {
                 switch session.phase {
                 case .setup:
-                    StartView(state: worktreeStart, start: session.start)
+                    StartView(state: worktreeStart, session: session)
                 case .connecting:
                     VStack(spacing: 12) {
                         ProgressView("Starting \(session.provider.rawValue)…")
@@ -63,24 +63,33 @@ struct ContentView: View {
 
 struct StartView: View {
     let state: WorktreeSessionStart
-    let start: (URL, ModelSettings, URL, Provider) async -> Void
+    let session: ChatSession
     @State private var provider = Provider.codex
     @State private var codexDraft = SessionSettingsDraft()
     @State private var claudeDraft = SessionSettingsDraft()
 
     var body: some View {
-        Form {
-            worktree
-            Picker("Provider", selection: $provider) {
-                ForEach(Provider.allCases) { Text($0.rawValue).tag($0) }
+        VStack(spacing: 0) {
+            Form {
+                worktree
+                if let error = state.error { Text(error).foregroundStyle(.red) }
+                Button("Start Session") { startSession() }
+                    .disabled(!state.canStart)
+                    .keyboardShortcut(.defaultAction)
             }
-            .disabled(state.isStarting)
-            if let error = state.error { Text(error).foregroundStyle(.red) }
-            SessionOptions(provider: provider, canStart: state.canStart,
-                           draft: provider == .codex ? $codexDraft : $claudeDraft, start: startSession)
+            .formStyle(.grouped)
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                MessageInput(session: session, provider: provider)
+                SessionStatusLine(
+                    provider: provider, providerSelection: $provider, settings: statusSettings,
+                    saved: ModelSettings(model: defaultModel, effort: defaultEffort)
+                )
                 .id(provider)
+                .disabled(state.isStarting)
+            }
+            .padding()
         }
-        .formStyle(.grouped)
         .onDisappear(perform: state.invalidate)
     }
 
@@ -100,9 +109,33 @@ struct StartView: View {
         }
     }
 
-    private func startSession(_ settings: ModelSettings) {
+    @AppStorage(Provider.codex.key("model")) private var codexModel = ""
+    @AppStorage(Provider.codex.key("effort")) private var codexEffort = ""
+    @AppStorage(Provider.claudeCode.key("model")) private var claudeModel = ""
+    @AppStorage(Provider.claudeCode.key("effort")) private var claudeEffort = ""
+
+    private var draft: SessionSettingsDraft { provider == .codex ? codexDraft : claudeDraft }
+    private var defaultModel: String { provider == .codex ? codexModel : claudeModel }
+    private var defaultEffort: String { provider == .codex ? codexEffort : claudeEffort }
+
+    private var statusSettings: Binding<ModelSettings> {
+        let selectedDraft = provider == .codex ? $codexDraft : $claudeDraft
+        return Binding(
+            get: { selectedDraft.wrappedValue.settings(defaultModel: defaultModel, defaultEffort: defaultEffort) },
+            set: { updated in
+                var draft = selectedDraft.wrappedValue
+                let current = draft.settings(defaultModel: defaultModel, defaultEffort: defaultEffort)
+                if current.model != updated.model { draft.model = updated.model ?? "" }
+                if current.effort != updated.effort { draft.effort = updated.effort ?? "" }
+                selectedDraft.wrappedValue = draft
+            }
+        )
+    }
+
+    private func startSession() {
         guard let id = state.begin() else { return }
         let provider = self.provider
+        let settings = draft.settings(defaultModel: defaultModel, defaultEffort: defaultEffort)
         var executable = provider == .codex ? CodexClient.findExecutable() : ClaudeCodeClient.findExecutable()
         if executable == nil {
             let panel = NSOpenPanel()
@@ -126,37 +159,7 @@ struct StartView: View {
         state.validateAndStart(id, validate: { selected in
             try await GitWorktreeCatalog().validate(selected.worktree, in: selected.repository)
         }, launch: { directory in
-            await start(directory, settings, executable, provider)
+            await session.start(worktree: directory, settings: settings, executable: executable, provider: provider)
         })
-    }
-}
-
-private struct SessionOptions: View {
-    let provider: Provider
-    let canStart: Bool
-    @Binding var draft: SessionSettingsDraft
-    let start: (ModelSettings) -> Void
-    @AppStorage private var defaultModel: String
-    @AppStorage private var defaultEffort: String
-
-    init(provider: Provider, canStart: Bool, draft: Binding<SessionSettingsDraft>, start: @escaping (ModelSettings) -> Void) {
-        self.provider = provider
-        self.canStart = canStart
-        _draft = draft
-        self.start = start
-        _defaultModel = AppStorage(wrappedValue: "", provider.key("model"))
-        _defaultEffort = AppStorage(wrappedValue: "", provider.key("effort"))
-    }
-
-    var body: some View {
-        let model = Binding(get: { draft.model ?? defaultModel }, set: { draft.model = $0 })
-        let effort = Binding(get: { draft.effort ?? defaultEffort }, set: { draft.effort = $0 })
-        TextField("Model", text: model, prompt: Text("CLI default"))
-        TextField("Effort", text: effort, prompt: Text("CLI default"))
-        Button("Start Session") {
-            start(draft.settings(defaultModel: defaultModel, defaultEffort: defaultEffort))
-        }
-        .disabled(!canStart)
-        .keyboardShortcut(.defaultAction)
     }
 }

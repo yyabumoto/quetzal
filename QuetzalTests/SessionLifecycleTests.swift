@@ -39,10 +39,61 @@ final class SessionLifecycleTests: XCTestCase {
             }
             let client = active.client()
             _ = try await client.start(worktree: active.folder, settings: settings)
-            let turn = try await client.startTurn(threadID: "t", text: "1", effort: settings.effort)
+            let turn = try await client.startTurn(threadID: "t", text: "1", settings: settings)
             XCTAssertEqual(turn, "1")
             await client.close()
             for window in windows { await window.close() }
+        }
+    }
+
+    func testModelMenuKeepsNormalizedValuesWithoutAnEmptyOption() {
+        let current = ModelSettings(model: " current-model ", effort: nil)
+        let saved = ModelSettings(model: " saved-model ", effort: nil)
+        XCTAssertEqual(Provider.claudeCode.modelOptions(current: current, saved: saved),
+                       ["opus", "sonnet", "haiku", "saved-model", "current-model"])
+        XCTAssertEqual(Provider.claudeCode.modelOptions(current: ModelSettings(model: "", effort: nil),
+                                                        saved: ModelSettings(model: " sonnet ", effort: nil)),
+                       ["opus", "sonnet", "haiku"])
+    }
+
+    func testEffortMenusUseSelectedModelAndKeepExistingValues() {
+        let savedMax = ModelSettings(model: nil, effort: " max ")
+        let savedCustom = ModelSettings(model: nil, effort: "custom")
+        let legacy = ModelSettings(model: "gpt-5.5", effort: "ultra")
+        XCTAssertEqual(Provider.codex.effortOptions(current: legacy, saved: savedMax, isSessionSetup: false),
+                       ["low", "medium", "high", "xhigh", "ultra"])
+        XCTAssertEqual(Provider.codex.effortOptions(current: ModelSettings(model: "gpt-6-luna", effort: nil),
+                                                    saved: savedMax, isSessionSetup: true),
+                       ["low", "medium", "high", "xhigh", "max"])
+        XCTAssertEqual(Provider.codex.effortOptions(current: ModelSettings(model: "custom-model", effort: nil),
+                                                    saved: savedCustom, isSessionSetup: true),
+                       ["low", "medium", "high", "xhigh", "custom"])
+
+        let uppercase = ModelSettings(model: nil, effort: "HIGH")
+        let low = ModelSettings(model: nil, effort: "low")
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: low, saved: uppercase, isSessionSetup: false),
+                       ClaudeCodeEffort.levels)
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: uppercase, saved: uppercase, isSessionSetup: false),
+                       ClaudeCodeEffort.levels + ["HIGH"])
+        XCTAssertEqual(Provider.claudeCode.effortOptions(current: low, saved: uppercase, isSessionSetup: true),
+                       ClaudeCodeEffort.levels + ["HIGH"])
+    }
+
+    func testModelSelectionAdjustsOnlyAnUnsupportedKnownCodexEffort() {
+        let cases: [(Provider, String, String?, String, String?)] = [
+            (.codex, "gpt-6.2-sol", "ultra", "gpt-5.5", "medium"),
+            (.codex, "gpt-6.2-sol", "high", "gpt-5.5", "high"),
+            (.codex, "gpt-6.2-sol", nil, "gpt-5.5", nil),
+            (.codex, "gpt-6.2-sol", "custom", "gpt-5.5", "custom"),
+            (.codex, "gpt-6.2-sol", "ultra", "custom-model", "ultra"),
+            (.codex, "gpt-6.2-sol", "ultra", "", "ultra"),
+            (.codex, "gpt-5.5", "ultra", "gpt-5.5", "ultra"),
+            (.claudeCode, "opus", "ultracode", "sonnet", "ultracode")
+        ]
+        for (provider, oldModel, currentEffort, selected, expectedEffort) in cases {
+            let current = ModelSettings(model: oldModel, effort: currentEffort)
+            XCTAssertEqual(provider.selectingModel(selected, in: current),
+                           ModelSettings(model: selected, effort: expectedEffort))
         }
     }
 
@@ -57,11 +108,12 @@ final class SessionLifecycleTests: XCTestCase {
         let changed = ModelSettings(model: "updated", effort: "high")
         changed.save(for: .codex, store: store)
         let cases: [(String?, String?, String, String)] = [
-            (nil, nil, #"{"model":"updated"}"#, #"{"effort":"high"}"#),
-            ("custom", nil, #"{"model":"custom"}"#, #"{"effort":"high"}"#),
-            (nil, "low", #"{"model":"updated"}"#, #"{"effort":"low"}"#),
-            ("", nil, "{}", #"{"effort":"high"}"#),
-            (nil, "", #"{"model":"updated"}"#, "{}")
+            (nil, nil, #"{"model":"updated","config":{"model_reasoning_effort":"high"}}"#, #"{"model":"updated","effort":"high"}"#),
+            ("custom", nil, #"{"model":"custom","config":{"model_reasoning_effort":"high"}}"#, #"{"model":"custom","effort":"high"}"#),
+            (nil, "low", #"{"model":"updated","config":{"model_reasoning_effort":"low"}}"#, #"{"model":"updated","effort":"low"}"#),
+            ("", nil, #"{"config":{"model_reasoning_effort":"high"}}"#, #"{"effort":"high"}"#),
+            (nil, "", #"{"model":"updated"}"#, #"{"model":"updated"}"#),
+            ("", "", "{}", "{}")
         ]
         for (model, effort, threadOptions, turnOptions) in cases {
             draft.model = model
@@ -77,7 +129,7 @@ final class SessionLifecycleTests: XCTestCase {
             defer { try? server.remove() }
             let client = server.client()
             _ = try await client.start(worktree: server.folder, settings: settings)
-            _ = try await client.startTurn(threadID: "t", text: "1", effort: settings.effort)
+            _ = try await client.startTurn(threadID: "t", text: "1", settings: settings)
             await withinDeadline("Close after server exit") { await client.close() }
             XCTAssertEqual(ModelSettings.defaults(for: .codex, store: store), changed)
         }
@@ -95,7 +147,8 @@ final class SessionLifecycleTests: XCTestCase {
             ("custom", nil, #""custom""#, #""high""#),
             (nil, "low", #""updated""#, #""low""#),
             ("", nil, "None", #""high""#),
-            (nil, "", #""updated""#, "None")
+            (nil, "", #""updated""#, "None"),
+            ("", "", "None", "None")
         ]
         for (model, effort, expectedModel, expectedEffort) in cases {
             draft.model = model

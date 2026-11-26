@@ -27,6 +27,8 @@ actor ClaudeCodeClient: AgentClient {
     private var runningHooks: Set<String> = []
     private var startupWatchdog: Task<Void, Never>?
     private var currentTurn: String?
+    private var preparingTurn = false
+    private var settings = ModelSettings(model: nil, effort: nil)
     private var interrupted: Set<String> = []
     private var approvals: [RequestID: ApprovalRequest] = [:]
     private var textBlocks = ClaudeTextBlocks()
@@ -55,7 +57,9 @@ actor ClaudeCodeClient: AgentClient {
             armStartupWatchdog()
             var request: [String: JSON] = ["subtype": .string("initialize")]
             request["appendSystemPrompt"] = project.instructions.map(JSON.string)
-            _ = try await control(id: id, request)
+            let initialized = try await control(id: id, request)
+            try await confirmStartupSettings(settings, models: initialized["models"].elements ?? [])
+            self.settings = settings
             return sessionID
         } catch {
             finish(error)
@@ -109,9 +113,15 @@ actor ClaudeCodeClient: AgentClient {
         }
     }
 
-    func startTurn(threadID: String, text: String, effort: String?) async throws -> String {
+    func startTurn(threadID: String, text: String, settings: ModelSettings) async throws -> String {
         guard !finished else { throw ClaudeCodeFailure.disconnected }
-        guard currentTurn == nil else { throw ClaudeCodeFailure("A request is already running.") }
+        guard currentTurn == nil, !preparingTurn else { throw ClaudeCodeFailure("A request is already running.") }
+        if settings != self.settings {
+            preparingTurn = true
+            defer { preparingTurn = false }
+            try await applyTurnSettings(settings)
+        }
+        guard !finished else { throw ClaudeCodeFailure.disconnected }
         nextTurn += 1
         let turn = String(nextTurn)
         // 書き込みの完了より前に届いた出力も、この依頼のものとして扱う。
@@ -129,6 +139,97 @@ actor ClaudeCodeClient: AgentClient {
             throw error
         }
         return turn
+    }
+
+    private func confirmStartupSettings(_ settings: ModelSettings, models: [JSON]) async throws {
+        guard settings.model != nil || settings.effort != nil else { return }
+        let applied: JSON
+        do {
+            applied = try await settingsControl("get_settings")["applied"]
+        } catch let failure as ClaudeCodeFailure where failure.code == "unsupported_request"
+            || (failure.code == nil && failure.message == "Unsupported control request subtype: get_settings") {
+            // 古い CLI の起動フラグは、確認できる範囲で上位の設定と矛盾しないときに使う。
+            if let selected = settings.effort,
+               let override = environment["CLAUDE_CODE_EFFORT_LEVEL"]?.lowercased(),
+               (ClaudeCodeEffort.levels + ["auto", "unset"]).contains(override),
+               selected.lowercased() != override {
+                throw effortMismatch(selected, actual: override)
+            }
+            return
+        }
+        guard applied.fields != nil else { throw ClaudeCodeFailure.malformed }
+        if let model = settings.model, applied["model"].text != model {
+            let resolved = models.first { $0["value"].text == model }?["resolvedModel"].text
+            if resolved == nil || resolved != applied["model"].text {
+                _ = try await settingsControl("set_model", ["model": .string(model)])
+                if let effort = settings.effort {
+                    try confirmEffort(effort, applied: try await settingsControl("get_settings")["applied"])
+                }
+                return
+            }
+        }
+        if let effort = settings.effort { try confirmEffort(effort, applied: applied) }
+    }
+
+    private func applyTurnSettings(_ proposed: ModelSettings) async throws {
+        if (proposed.model == nil && settings.model != nil) || (proposed.effort == nil && settings.effort != nil) {
+            throw ClaudeCodeFailure("Choose a replacement model or effort for this session.")
+        }
+        if let effort = proposed.effort, effort != settings.effort, !ClaudeCodeEffort.levels.contains(effort) {
+            throw ClaudeCodeFailure("Choose a supported Claude Code effort.")
+        }
+
+        var appliedChange = false
+        do {
+            if let model = proposed.model, model != settings.model {
+                _ = try await settingsControl("set_model", ["model": .string(model)])
+                appliedChange = true
+            }
+            if let effort = proposed.effort, effort != settings.effort {
+                _ = try await settingsControl("apply_flag_settings", ["settings": .object(["effortLevel": .string(effort)])])
+                appliedChange = true
+            }
+            if let effort = proposed.effort {
+                let applied = try await settingsControl("get_settings")["applied"]
+                try confirmEffort(effort, applied: applied)
+            }
+            settings = proposed
+        } catch {
+            if appliedChange { finish(error) }
+            throw error
+        }
+    }
+
+    private func confirmEffort(_ selected: String, applied: JSON) throws {
+        guard let effort = applied.fields?["effort"], effort == .null || effort.text != nil else {
+            throw ClaudeCodeFailure("Claude Code did not report the session effort.")
+        }
+        let actual = effort.text
+        let expected = selected.lowercased()
+        if expected == "ultracode", actual == "xhigh", applied["ultracode"] == .bool(true) { return }
+        guard expected == actual else { throw effortMismatch(selected, actual: actual) }
+    }
+
+    private func effortMismatch(_ selected: String, actual: String?) -> ClaudeCodeFailure {
+        let report = if let actual {
+            "Claude Code reported effort \(actual) for the selected value \(selected)."
+        } else {
+            "Claude Code did not report an effective effort for the selected value \(selected)."
+        }
+        return ClaudeCodeFailure("\(report) Check CLAUDE_CODE_EFFORT_LEVEL and the selected model's effort support.")
+    }
+
+    private func settingsControl(_ subtype: String, _ parameters: [String: JSON] = [:]) async throws -> JSON {
+        var request = parameters
+        request["subtype"] = .string(subtype)
+        let id = nextRequestID()
+        let timer = Task {
+            do { try await Task.sleep(for: startupTimeout) } catch { return }
+            guard !Task.isCancelled, pending[id] != nil else { return }
+            finish(ClaudeCodeFailure("Claude Code did not confirm the session settings. Start a new session."))
+        }
+        defer { timer.cancel() }
+        return try await control(id: id, request)
     }
 
     func interrupt(threadID: String, turnID: String) async throws {

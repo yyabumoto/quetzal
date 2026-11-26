@@ -2,11 +2,20 @@ import Foundation
 
 nonisolated struct ClaudeCodeFailure: LocalizedError {
     let message: String
-    init(_ message: String) { self.message = message }
+    let code: String?
+
+    init(_ message: String, code: String? = nil) {
+        self.message = message
+        self.code = code
+    }
     var errorDescription: String? { message }
 
     static let malformed = Self("Claude Code sent an invalid message. Start a new session.")
     static let disconnected = Self("The Claude Code connection closed. Start a new session.")
+}
+
+nonisolated enum ClaudeCodeEffort {
+    static let levels = ["low", "medium", "high", "xhigh", "max", "ultracode"]
 }
 
 nonisolated enum ClaudeCodeArguments {
@@ -126,7 +135,7 @@ nonisolated enum ClaudeCodeMessage {
             case "success": self = .response(id: id, result: .success(response["response"]))
             case "error":
                 let reason = response["error"].text ?? "Claude Code rejected the request."
-                self = .response(id: id, result: .failure(ClaudeCodeFailure(reason)))
+                self = .response(id: id, result: .failure(ClaudeCodeFailure(reason, code: response["error_code"].text)))
             default: throw ClaudeCodeFailure.malformed
             }
         case "control_request":
