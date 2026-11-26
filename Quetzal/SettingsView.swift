@@ -26,8 +26,8 @@ private struct ProviderSettings: View {
 
     var body: some View {
         Section(provider.rawValue) {
-            TextField("Model", text: $model, prompt: Text("CLI default"))
-            TextField("Effort", text: $effort, prompt: Text("CLI default"))
+            TextField("Model", text: $model)
+            TextField("Effort", text: $effort)
         }
     }
 }

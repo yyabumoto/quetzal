@@ -21,12 +21,12 @@ final class ChatSession {
     private(set) var approvals: [ApprovalRequest] = []
     private(set) var answering: Set<RequestID> = []
     private(set) var notice: String?
+    private(set) var settings = ModelSettings(model: nil, effort: nil)
     var draft = ""
 
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var client: (any AgentClient)?
     @ObservationIgnored private var subscription: Task<Void, Never>?
-    @ObservationIgnored private var settings = ModelSettings(model: nil, effort: nil)
     @ObservationIgnored private var threadID: String?
     @ObservationIgnored private var turnID: String?
     @ObservationIgnored private var submission: UUID?
@@ -36,6 +36,13 @@ final class ChatSession {
 
     var canSend: Bool { phase == .ready && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var canInterrupt: Bool { phase == .running && turnID != nil }
+    var canEditSettings: Bool { phase == .ready || phase == .sending || phase == .running || phase == .interrupting }
+
+    func updateSettings(_ settings: ModelSettings) {
+        guard canEditSettings else { return }
+        self.settings = ModelSettings(model: settings.model ?? self.settings.model,
+                                      effort: settings.effort ?? self.settings.effort)
+    }
 
     func start(worktree: URL, settings: ModelSettings, executable: URL, provider: Provider = .codex) async {
         guard phase == .setup else { return }
@@ -83,6 +90,7 @@ final class ChatSession {
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let token = generation
         let request = UUID()
+        let turnSettings = settings
         submission = request
         notice = nil
         draft = ""
@@ -90,7 +98,7 @@ final class ChatSession {
         messages.append(message)
         phase = .sending
         do {
-            let id = try await client.startTurn(threadID: threadID, text: text, effort: settings.effort)
+            let id = try await client.startTurn(threadID: threadID, text: text, settings: turnSettings)
             guard generation == token, submission == request, phase != .disconnected else { return }
             began(id)
         } catch {
