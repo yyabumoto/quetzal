@@ -1,19 +1,19 @@
-# チャットとセッション
+# Chat and sessions
 
-## 開始と設定
+## Start a session and choose settings
 
-- ウインドウごとに作業先、CLI との接続、会話を持つ。開始画面で Codex または Claude Code を選択し、[選んだ worktree](worktrees.md) でセッションを開始する。CLI が見つからなければ実行ファイルを選べる。接続中は「Cancel」で開始を取り消せる。
-- 「Settings」でプロバイダーごとのモデルと effort の既定値を保存する。開始画面での変更は、そのプロバイダーの今回の開始に適用する。空欄や空白だけの値は CLI の既定値に委ねる。
+- Each window has its own worktree selection, CLI connection, and conversation. Choose Codex or Claude Code on the setup screen and start a session in the [selected worktree](worktrees.md). If Quetzal cannot find the CLI, you can choose its executable. While connecting, use **Cancel** to stop startup.
+- **Settings** saves the default model and effort for each provider. Edits on the setup screen apply to the next session started with that provider. Blank or whitespace-only values defer to the CLI defaults.
 
-## 入力と履歴
+## Compose messages and read the conversation
 
-- ヘッダーにプロバイダー名と作業先のパスを表示する。履歴ではユーザーの名前と発言を右揃え、エージェントの応答とセッションの通知を左揃えにする。エージェントの応答は受信中から順次表示する。
-- 入力可能なときは入力欄の右に「Send」を表示する。空白だけのメッセージは送信できない。送信にはボタンまたは ⌘Return を使う。依頼が開始する前に送信が失敗した場合は、入力欄に文章を戻す。
-- 送信中、実行中、中断処理中は同じ位置に「Interrupt」を表示する。中断は依頼が実行中で、対象の依頼を特定できるときに使える。依頼の完了後は次のメッセージを送信できる。失敗または中断した依頼は履歴に通知を出す。
+- The header shows the provider name and worktree path. The user's name and messages are right-aligned. Agent responses and session notices are left-aligned. Agent responses appear as they stream in.
+- When the composer is ready, **Send** appears to its right. Click the button or press ⌘Return to send. Blank or whitespace-only messages cannot be sent. If sending fails before the request starts, Quetzal restores the message to the composer.
+- While sending, running, or interrupting a request, **Interrupt** appears in the same position. The button is enabled when a request is running and Quetzal can identify it. Once the request ends, the composer accepts the next message. Failed and interrupted requests produce a notice in the conversation.
 
-## 承認と終了
+## Approve requests and end a session
 
-- CLI から受け取った承認要求は、要求ごとにカードとして履歴の下に表示する。カードに操作内容と、要求に含まれる対象や理由を表示する。「Allow」と「Decline」で応答し、許可に必要な情報が不足している場合は「Allow」を無効にする。表示後に内容が変わった要求への許可には再確認が必要になる。
-- CLI との接続が切れた場合は、会話とエラーを表示したまま入力欄と承認カードを閉じる。「New Session」で開始画面に戻れる。セッションを終了すると会話、下書き、承認を破棄し、CLI を終了する。
+- Each approval request from the CLI appears in its own card below the conversation. The card shows the operation and any targets or reasons provided by the CLI. Use **Allow** or **Decline** to respond. **Allow** is disabled when required details are missing. If the details change after the card is displayed, the user must review the updated request before allowing it.
+- If the CLI disconnects, Quetzal keeps the conversation and error visible and removes the composer and approval cards. **New Session** returns to the setup screen. Ending a session discards its conversation, draft, and approvals and stops the CLI.
 
-実装は [ChatSession.swift](../Quetzal/ChatSession.swift)、[ChatView.swift](../Quetzal/ChatView.swift)、[ModelSettings.swift](../Quetzal/ModelSettings.swift) を参照。
+See [ChatSession.swift](../Quetzal/ChatSession.swift), [ChatView.swift](../Quetzal/ChatView.swift), and [ModelSettings.swift](../Quetzal/ModelSettings.swift).

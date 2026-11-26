@@ -1,10 +1,10 @@
-# Quetzal の仕様
+# Quetzal specifications
 
-| 仕様 | 内容 |
+| Specification | Scope |
 | --- | --- |
-| [リポジトリと worktree](worktrees.md) | サイドバーでの作業先の選択、開始前の検証、セッション中の切り替え |
-| [チャットとセッション](chat-sessions.md) | 会話の開始と終了、入力欄、履歴、承認、設定 |
-| [CLI 連携](agent-clients.md) | Codex と Claude Code の接続、プロトコル、作業先の設定の扱い |
-| [macOS 対応とビルド](macos-build.md) | 最低対応バージョン、Xcode プロジェクト、CI のビルド対象 |
+| [Repositories and worktrees](worktrees.md) | Selecting a worktree in the sidebar, validating it before launch, and switching worktrees during a session |
+| [Chat and sessions](chat-sessions.md) | Starting and ending sessions, composing messages, conversation history, approvals, and settings |
+| [CLI integration](agent-clients.md) | Codex and Claude Code connections, protocols, and project settings |
+| [macOS support and builds](macos-build.md) | Minimum supported macOS version, Xcode project, and CI build coverage |
 
-ユーザーから見える振る舞い、外部 CLI との取り決め、実装を変更しても守る設計上の判断をここに記録する。既存の仕様が変わるときは、実装と同じ PR で該当ページを更新する。新しい機能で参照先がなければページを作り、この一覧に加える。
+Record user-visible behavior, expectations for external CLIs, and design decisions that should hold as the implementation changes. When a specification changes, update its page in the same PR as the implementation. If a new feature has no relevant page, add one and link it here.

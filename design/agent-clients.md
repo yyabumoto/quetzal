@@ -1,18 +1,18 @@
-# CLI 連携
+# CLI integration
 
-アプリはセッションごとに CLI を子プロセスとして起動し、標準入出力で改行区切りの JSON をやり取りする。各 CLI の応答、承認、完了を共通のイベントに変換し、[チャット](chat-sessions.md)に渡す。ウインドウを閉じた場合や開始を取り消した場合は、その接続を閉じて子プロセスを終了する。終了済みの接続から届いたイベントは、新しいセッションの状態に反映しない。
+Quetzal launches one CLI child process per session and exchanges newline-delimited JSON over standard input and output. It converts responses, approval requests, and completion messages into the common events used by the [chat session](chat-sessions.md). Closing a window or canceling startup closes the connection and stops its child process. Events from a closed connection cannot change the state of a new session.
 
 ## Codex
 
-- `codex app-server --stdio` を起動する。初期化後、選択した worktree を `cwd` に指定して `thread/start` を呼ぶ。応答の `cwd` が選択した worktree と一致することを確認する。
-- モデルはスレッドの開始時、effort は各 `turn/start` に渡す。中断には `turn/interrupt` を使い、依頼の終了は `turn/completed` で判断する。
-- コマンドの実行、端末への入力、ファイル変更、依頼単位の権限付与の承認を扱う。承認は要求 ID を単位とし、ファイル変更の対象はスレッド、依頼、項目の組で照合する。対象が後から届いた場合は、該当するカードを更新する。コマンドの承認に接続先が含まれる場合は、接続先のプロトコルとホストを表示する。
+- Quetzal launches `codex app-server --stdio`. After initialization, it calls `thread/start` with the selected worktree as `cwd` and verifies that the returned `cwd` matches.
+- Quetzal passes the model when starting the thread and the effort with each `turn/start`. It uses `turn/interrupt` to request interruption and `turn/completed` to determine when the turn ends.
+- Quetzal handles approvals for command execution, terminal input, file changes, and turn-scoped permissions. It tracks approvals by request ID and matches file-change targets by thread, turn, and item. If the targets arrive later, it updates the corresponding card. If a command approval includes a network destination, the card shows its protocol and host.
 
 ## Claude Code
 
-- `claude` を `stream-json` で起動し、モデルと effort を起動引数に渡す。初期化と中断は制御メッセージで行う。CLI から受け取った初期化イベントの作業ディレクトリとセッション ID を照合する。起動の応答待ちは、報告された SessionStart フックの実行中はタイムアウトを停止する。
-- テキストの増分と確定テキストを履歴に反映し、`result` を依頼の終端として扱う。ツール使用の承認は標準入出力で受け取り、要求ごとに許可または拒否を返す。CLI が要求を取り消した場合はカードを取り除く。
-- 選択した worktree 内の `CLAUDE.md` と `.claude/CLAUDE.md` から、読み込み条件を満たす指示を初期化時に渡す。リンクは worktree 内のファイルを指す場合に読み込む。
-- CLI の設定ソースは利用者設定に限定する。worktree 内の `.claude/settings.json` と `.claude/settings.local.json` から取り込む設定は `permissions.deny` と `permissions.ask` に限る。該当するプロジェクト設定ファイルや `.mcp.json` がある場合は、チャットに設定の扱いを表示する。
+- Quetzal launches `claude` in `stream-json` mode and passes the model and effort as startup arguments. It initializes and interrupts the session with control messages. It checks the working directory and session ID reported in the initialization event. The startup timeout is suspended while a reported SessionStart hook is running.
+- Quetzal displays incremental and final text in the conversation and uses `result` to determine when the turn ends. It reads tool approval requests from the CLI’s standard output and writes a decision for each request to its standard input. If the CLI cancels a request, Quetzal removes its card.
+- At initialization, Quetzal passes instructions read from eligible `CLAUDE.md` and `.claude/CLAUDE.md` files in the selected worktree. It follows links to instruction files within the worktree.
+- The CLI loads user settings. Quetzal also forwards `permissions.deny` and `permissions.ask` from the worktree's `.claude/settings.json` and `.claude/settings.local.json`. When either settings file or `.mcp.json` exists, the chat explains which project settings apply.
 
-実装は [CodexClient.swift](../Quetzal/CodexClient.swift)、[ClaudeCodeClient.swift](../Quetzal/ClaudeCodeClient.swift)、[ClaudeCodeProtocol.swift](../Quetzal/ClaudeCodeProtocol.swift)、[AgentProtocol.swift](../Quetzal/AgentProtocol.swift) を参照。
+See [CodexClient.swift](../Quetzal/CodexClient.swift), [ClaudeCodeClient.swift](../Quetzal/ClaudeCodeClient.swift), [ClaudeCodeProtocol.swift](../Quetzal/ClaudeCodeProtocol.swift), and [AgentProtocol.swift](../Quetzal/AgentProtocol.swift).
