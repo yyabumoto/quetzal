@@ -3,6 +3,8 @@ import Observation
 
 @MainActor @Observable
 final class ChatSession {
+    typealias Connect = (_ executable: URL, _ project: ClaudeCodeProject?) -> any AgentClient
+
     enum Phase: Equatable {
         case setup, connecting, ready, sending, running, interrupting, disconnected
     }
@@ -26,6 +28,7 @@ final class ChatSession {
     private(set) var settings = ModelSettings(model: nil, effort: nil)
     var draft = ""
 
+    @ObservationIgnored private let connect: Connect
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var client: (any AgentClient)?
     @ObservationIgnored private var subscription: Task<Void, Never>?
@@ -40,8 +43,13 @@ final class ChatSession {
     @ObservationIgnored private var naming: Task<Void, Never>?
     @ObservationIgnored private var namingID: UUID?
 
-    init(namer: WorkNamer) {
+    init(namer: WorkNamer, connect: @escaping Connect = ChatSession.connectCLI) {
         self.namer = namer
+        self.connect = connect
+    }
+
+    nonisolated static func connectCLI(executable: URL, project: ClaudeCodeProject?) -> any AgentClient {
+        if let project { ClaudeCodeClient(executable: executable, project: project) } else { CodexClient(executable: executable) }
     }
 
     var canSend: Bool { phase == .ready && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -62,11 +70,7 @@ final class ChatSession {
         self.worktree = worktree
         self.executable = executable
         let project = provider == .claudeCode ? ClaudeCodeProject.load(in: worktree) : nil
-        let connection: any AgentClient = if let project {
-            ClaudeCodeClient(executable: executable, project: project)
-        } else {
-            CodexClient(executable: executable)
-        }
+        let connection = connect(executable, project)
         client = connection
         let token = generation
         subscription = Task { [weak self] in

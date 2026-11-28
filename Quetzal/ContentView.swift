@@ -1,9 +1,19 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var session = ChatSession(namer: .live)
-    @State private var worktreeStart = WorktreeSessionStart()
-    @State private var sidebar = WorktreeSidebarModel()
+    @State private var session: ChatSession
+    @State private var worktreeStart: WorktreeSessionStart
+    @State private var sidebar: WorktreeSidebarModel
+
+    init() {
+        self.init(session: ChatSession(namer: .live), worktreeStart: WorktreeSessionStart(), sidebar: WorktreeSidebarModel())
+    }
+
+    init(session: ChatSession, worktreeStart: WorktreeSessionStart, sidebar: WorktreeSidebarModel) {
+        _session = State(initialValue: session)
+        _worktreeStart = State(initialValue: worktreeStart)
+        _sidebar = State(initialValue: sidebar)
+    }
 
     var body: some View {
         NavigationSplitView {
