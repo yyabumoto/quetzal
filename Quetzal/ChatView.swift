@@ -15,7 +15,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading) {
-                    Text(session.provider.rawValue).font(.headline)
+                    Text(session.title ?? session.provider.rawValue).font(.headline)
                     Text(session.worktree?.path ?? "").foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 Spacer()

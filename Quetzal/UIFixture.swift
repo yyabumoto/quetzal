@@ -97,7 +97,7 @@ struct UIFixture: Equatable {
     func makeSession() -> ChatSession {
         let turns = exchanges.map(\.turn)
         let disconnect = scenario == .errorNotice ? CodexFailure.disconnected.message : nil
-        return ChatSession { _, _ in FixtureAgentClient(turns: turns, disconnectAfterLastTurn: disconnect) }
+        return ChatSession(namer: .fallbackOnly) { _, _ in FixtureAgentClient(turns: turns, disconnectAfterLastTurn: disconnect) }
     }
 
     func makeSidebar() -> WorktreeSidebarModel {

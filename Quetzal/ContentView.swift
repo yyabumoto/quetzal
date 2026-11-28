@@ -6,7 +6,7 @@ struct ContentView: View {
     @State private var sidebar: WorktreeSidebarModel
 
     init() {
-        self.init(session: ChatSession(), worktreeStart: WorktreeSessionStart(), sidebar: WorktreeSidebarModel())
+        self.init(session: ChatSession(namer: .live), worktreeStart: WorktreeSessionStart(), sidebar: WorktreeSidebarModel())
     }
 
     init(session: ChatSession, worktreeStart: WorktreeSessionStart, sidebar: WorktreeSidebarModel) {
