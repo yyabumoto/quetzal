@@ -10,53 +10,65 @@ final class ScreenshotTests: XCTestCase {
         static func absent(_ element: XCUIElement) -> Self { Self { !element.exists } }
     }
 
-    func testNoRepository() {
-        capture("no-repository") { app in
+    private static let progressReply =
+        "The empty state uses ContentUnavailableView with an Open Repository button. I'll add a test for it next."
+
+    func testNoRepositoryLight() { captureNoRepository("light") }
+    func testNoRepositoryDark() { captureNoRepository("dark") }
+    func testWorktreeSelectedLight() { captureWorktreeSelected("light") }
+    func testWorktreeSelectedDark() { captureWorktreeSelected("dark") }
+    func testSessionInProgressLight() { captureSessionInProgress("light") }
+    func testSessionInProgressDark() { captureSessionInProgress("dark") }
+    func testPendingApprovalLight() { capturePendingApproval("light") }
+    func testPendingApprovalDark() { capturePendingApproval("dark") }
+    func testErrorNoticeLight() { captureErrorNotice("light") }
+    func testErrorNoticeDark() { captureErrorNotice("dark") }
+
+    private func captureNoRepository(_ appearance: String) {
+        capture("no-repository", appearance) { app in
             [.exists(app.buttons["Open Repository…"]), .exists(app.staticTexts["Select a worktree in the sidebar."])]
         }
     }
 
-    func testWorktreeSelected() {
-        capture("worktree-selected") { app in
+    private func captureWorktreeSelected(_ appearance: String) {
+        capture("worktree-selected", appearance) { app in
             [.exists(app.staticTexts["quetzal-sidebar"]), .enabled(app.buttons["Start Session"])]
         }
     }
 
-    func testSessionInProgress() {
-        let reply = "The empty state uses ContentUnavailableView with an Open Repository button. I'll add a test for it next."
-        capture("session-in-progress") { app in
-            [.exists(app.staticTexts[reply]), .exists(app.buttons["Send"]), .absent(app.buttons["Interrupt"])]
+    private func captureSessionInProgress(_ appearance: String) {
+        capture("session-in-progress", appearance) { app in
+            [.exists(app.staticTexts[Self.progressReply]), .exists(app.buttons["Send"]), .absent(app.buttons["Interrupt"])]
         }
     }
 
-    func testPendingApproval() {
-        capture("pending-approval") { app in
+    private func capturePendingApproval(_ appearance: String) {
+        capture("pending-approval", appearance) { app in
             [.enabled(app.buttons["Allow"]), .enabled(app.buttons["Interrupt"])]
         }
     }
 
-    func testErrorNotice() {
-        capture("error-notice") { app in
+    private func captureErrorNotice(_ appearance: String) {
+        capture("error-notice", appearance) { app in
             [.exists(app.staticTexts["The Codex connection closed. Start a new session."]), .absent(app.buttons["Send"])]
         }
     }
 
-    private func capture(_ scenario: String, until conditions: (XCUIApplication) -> [Condition]) {
+    private func capture(_ scenario: String, _ appearance: String,
+                         until conditions: (XCUIApplication) -> [Condition]) {
         continueAfterFailure = false
-        for appearance in ["light", "dark"] {
-            let app = XCUIApplication()
-            app.launchArguments = ["--ui-fixture", scenario, "--ui-appearance", appearance,
-                                   "-ApplePersistenceIgnoreState", "YES"]
-            app.launch()
-            XCTAssertTrue(waitUntilAll(conditions(app), timeout: 10),
-                          "\(scenario)-\(appearance) did not reach its final state")
-            let attachment = XCTAttachment(data: app.windows.firstMatch.screenshot().pngRepresentation,
-                                           uniformTypeIdentifier: "public.png")
-            attachment.name = "\(scenario)-\(appearance)"
-            attachment.lifetime = .keepAlways
-            add(attachment)
-            app.terminate()
-        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-fixture", scenario, "--ui-appearance", appearance,
+                               "-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        XCTAssertTrue(waitUntilAll(conditions(app), timeout: 10),
+                      "\(scenario)-\(appearance) did not reach its final state")
+        let attachment = XCTAttachment(data: app.windows.firstMatch.screenshot().pngRepresentation,
+                                       uniformTypeIdentifier: "public.png")
+        attachment.name = "\(scenario)-\(appearance)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.terminate()
     }
 
     // XCTNSPredicateExpectation stops evaluating a predicate once it holds, so separate
