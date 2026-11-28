@@ -26,6 +26,8 @@ xcodebuild build -project Quetzal.xcodeproj -scheme Quetzal -destination 'platfo
 | --- | --- |
 | `Quetzal/` | App source |
 | `QuetzalTests/` | Unit tests |
+| `QuetzalUITests/` | UI tests that capture screenshots of fixture states |
+| `scripts/` | Developer scripts, such as UI screenshot capture |
 | `design/` | Specifications of current behavior. Start at [design/README.md](design/README.md) |
 | `.github/workflows/` | CI workflow that builds the app on macOS 26 and 27 |
 
