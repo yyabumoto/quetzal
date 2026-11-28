@@ -3,6 +3,8 @@ import Observation
 
 @MainActor @Observable
 final class ChatSession {
+    typealias Connect = (_ executable: URL, _ project: ClaudeCodeProject?) -> any AgentClient
+
     enum Phase: Equatable {
         case setup, connecting, ready, sending, running, interrupting, disconnected
     }
@@ -24,6 +26,7 @@ final class ChatSession {
     private(set) var settings = ModelSettings(model: nil, effort: nil)
     var draft = ""
 
+    @ObservationIgnored private let connect: Connect
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var client: (any AgentClient)?
     @ObservationIgnored private var subscription: Task<Void, Never>?
@@ -33,6 +36,14 @@ final class ChatSession {
     @ObservationIgnored private var completed: Set<String> = []
     @ObservationIgnored private var messageIndices: [ItemKey: Int] = [:]
     @ObservationIgnored private var lastErrors: [String: String] = [:]
+
+    init(connect: @escaping Connect = ChatSession.connectCLI) {
+        self.connect = connect
+    }
+
+    nonisolated static func connectCLI(executable: URL, project: ClaudeCodeProject?) -> any AgentClient {
+        if let project { ClaudeCodeClient(executable: executable, project: project) } else { CodexClient(executable: executable) }
+    }
 
     var canSend: Bool { phase == .ready && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var canInterrupt: Bool { phase == .running && turnID != nil }
@@ -51,11 +62,7 @@ final class ChatSession {
         self.settings = settings
         self.worktree = worktree
         let project = provider == .claudeCode ? ClaudeCodeProject.load(in: worktree) : nil
-        let connection: any AgentClient = if let project {
-            ClaudeCodeClient(executable: executable, project: project)
-        } else {
-            CodexClient(executable: executable)
-        }
+        let connection = connect(executable, project)
         client = connection
         let token = generation
         subscription = Task { [weak self] in

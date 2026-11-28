@@ -81,6 +81,78 @@
 			};
 			name = Release;
 		};
+		D40000000000000000000001 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = QuetzalUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		D40000000000000000000002 = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = QuetzalUITests;
+			sourceTree = "<group>";
+		};
+		D40000000000000000000003 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D40000000000000000000004;
+			buildPhases = (D40000000000000000000005,);
+			buildRules = ();
+			dependencies = (D40000000000000000000006,);
+			fileSystemSynchronizedGroups = (D40000000000000000000002,);
+			name = QuetzalUITests;
+			productName = QuetzalUITests;
+			productReference = D40000000000000000000001;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		D40000000000000000000004 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (D40000000000000000000007,D40000000000000000000008,);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D40000000000000000000005 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D40000000000000000000006 = {
+			isa = PBXTargetDependency;
+			target = 3154D69C10F64FEF853D82C4;
+			targetProxy = D40000000000000000000009;
+		};
+		D40000000000000000000009 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DAF84FDFAF064F9FA814326B;
+			proxyType = 1;
+			remoteGlobalIDString = 3154D69C10F64FEF853D82C4;
+			remoteInfo = Quetzal;
+		};
+		D40000000000000000000007 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.github.yyabumoto.QuetzalUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Quetzal;
+			};
+			name = Debug;
+		};
+		D40000000000000000000008 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.github.yyabumoto.QuetzalUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Quetzal;
+			};
+			name = Release;
+		};
 
 		78C1C073E792416D9F8FEA2A = {
 			isa = PBXFileReference;
@@ -98,6 +170,7 @@
 			isa = PBXGroup;
 			children = (
 				C30000000000000000000001,
+				D40000000000000000000001,
 				78C1C073E792416D9F8FEA2A,
 			);
 			name = Products;
@@ -107,6 +180,7 @@
 			isa = PBXGroup;
 			children = (
 				C30000000000000000000002,
+				D40000000000000000000002,
 				B4756B8E05F44D299128E235,
 				C9AF4CDBB9BE4E76902B0C7F,
 			);
@@ -367,6 +441,7 @@
 			projectRoot = "";
 			targets = (
 				C30000000000000000000003,
+				D40000000000000000000003,
 				3154D69C10F64FEF853D82C4,
 			);
 		};
